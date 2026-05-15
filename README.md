@@ -1,6 +1,6 @@
 # AI Slop Collabs
 
-A home for ~~vibe coded ideas~~ AI Collaborations that might never get a chance to live on their own repo. Single project for now, more to come over time. 
+A home for ~~vibe coded ideas~~ AI Collaborations that might never get a chance to live on their own repo. Single project for now, more to come over time. Many has been killed throughout the past year and I hope I had archived them somewhere.
 
 - [gh-standup](./gh-standup) - A small bash CLI that emits an LLM-ready prompt summarizing recent GitHub repo activity. Pipe the output to any LLM to get a daily standup.
 - ...
