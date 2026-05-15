@@ -1,0 +1,349 @@
+#!/usr/bin/env bash
+# gh-standup: emit an LLM prompt summarizing recent GitHub repo activity.
+#
+# Usage:
+#   gh-standup <owner/repo> --since <ISO8601> [--no-cache] [--cache-dir DIR]
+#
+# Example:
+#   gh-standup cli/cli --since "$(date -u -d '1 day ago' +%FT%TZ)" | llm
+#   gh-standup cli/cli --since "$(gdate -u -d '1 day ago' +%FT%TZ)" | llm   # macOS w/ coreutils
+#
+# Requires: gh (authenticated), jq, sha256sum (or shasum).
+
+set -euo pipefail
+
+# ---------- arg parsing ----------
+REPO=""
+SINCE=""
+NO_CACHE=0
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/gh-standup"
+
+usage() {
+  sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+  exit "${1:-0}"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --since)     SINCE="$2"; shift 2 ;;
+    --no-cache)  NO_CACHE=1; shift ;;
+    --cache-dir) CACHE_DIR="$2"; shift 2 ;;
+    -h|--help)   usage 0 ;;
+    -*)          echo "unknown flag: $1" >&2; usage 1 ;;
+    *)
+      if [[ -z "$REPO" ]]; then REPO="$1"; shift
+      else echo "unexpected arg: $1" >&2; usage 1; fi
+      ;;
+  esac
+done
+
+[[ -z "$REPO" ]] && { echo "error: missing <owner/repo>" >&2; usage 1; }
+[[ -z "$SINCE" ]] && { echo "error: --since required (ISO 8601, e.g. 2026-05-14T00:00:00Z)" >&2; usage 1; }
+[[ "$REPO" != */* ]] && { echo "error: repo must be owner/name" >&2; exit 1; }
+
+# Validate ISO 8601 (cheap regex; full validation is upstream's job).
+if ! [[ "$SINCE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:?[0-9]{2})$ ]]; then
+  echo "error: --since must be ISO 8601 (e.g. 2026-05-14T00:00:00Z)" >&2
+  exit 1
+fi
+
+OWNER="${REPO%/*}"
+NAME="${REPO#*/}"
+
+# ---------- cache ----------
+mkdir -p "$CACHE_DIR"
+if command -v sha256sum >/dev/null 2>&1; then
+  HASH=$(printf '%s|%s' "$REPO" "$SINCE" | sha256sum | cut -c1-16)
+else
+  HASH=$(printf '%s|%s' "$REPO" "$SINCE" | shasum -a 256 | cut -c1-16)
+fi
+CACHE_FILE="$CACHE_DIR/${OWNER}__${NAME}__${HASH}.json"
+
+# ---------- fetch ----------
+GRAPHQL_QUERY='
+query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    nameWithOwner
+    pullRequests(first: 50, orderBy: {field: UPDATED_AT, direction: DESC},
+                 states: [OPEN, MERGED, CLOSED]) {
+      nodes {
+        number title url state isDraft
+        createdAt mergedAt closedAt updatedAt
+        author { login __typename ... on User { name } }
+        body
+        additions deletions changedFiles
+        reviews(first: 20) {
+          nodes { state submittedAt body author { login __typename } }
+        }
+        comments(first: 20) {
+          nodes { createdAt body author { login __typename } }
+        }
+      }
+    }
+    issues(first: 50, orderBy: {field: UPDATED_AT, direction: DESC},
+           states: [OPEN, CLOSED]) {
+      nodes {
+        number title url state
+        createdAt closedAt updatedAt
+        author { login __typename ... on User { name } }
+        body
+        comments(first: 20) {
+          nodes { createdAt body author { login __typename } }
+        }
+      }
+    }
+  }
+}'
+
+if [[ -f "$CACHE_FILE" && $NO_CACHE -eq 0 ]]; then
+  echo "# (cache hit: $CACHE_FILE)" >&2
+  RAW=$(cat "$CACHE_FILE")
+else
+  echo "# fetching from GitHub API..." >&2
+  RAW=$(gh api graphql \
+    -F owner="$OWNER" -F name="$NAME" \
+    -f query="$GRAPHQL_QUERY")
+  echo "$RAW" > "$CACHE_FILE"
+fi
+
+# ---------- normalize & filter (jq) ----------
+# - filter PRs/issues to those with any activity in [SINCE, now]
+# - strip markdown from bodies
+# - decide body inclusion: bot=title only; >2000 chars=first para + bullets; else full
+# - bucket by event type for prompt assembly
+NORMALIZED=$(echo "$RAW" | jq --arg since "$SINCE" '
+  def strip_md:
+    # Drop HTML comments, code fences, images, then unwrap links, then strip emphasis/headings.
+    gsub("<!--[\\s\\S]*?-->"; "")
+    | gsub("```[\\s\\S]*?```"; "[code block]")
+    | gsub("`(?<t>[^`]+)`"; "\(.t)")
+    | gsub("!\\[[^\\]]*\\]\\([^)]*\\)"; "[image]")
+    | gsub("\\[(?<t>[^\\]]+)\\]\\((?<u>[^)]+)\\)"; "\(.t)")
+    | gsub("(?m)^#{1,6}\\s+"; "")
+    | gsub("\\*\\*(?<t>[^*]+)\\*\\*"; "\(.t)")
+    | gsub("(?<!\\*)\\*(?<t>[^*\\n]+)\\*"; "\(.t)")
+    | gsub("(?m)^\\s*>\\s?"; "")
+    | gsub("\\r"; "")
+    | gsub("\\n{3,}"; "\n\n");
+
+  def first_para_plus_bullets:
+    . as $body
+    | ($body | split("\n\n")) as $paras
+    | ($paras[0] // "")
+      + (
+          [$paras[1:][] | select(test("(?m)^\\s*[-*+]\\s"))] | .[0:1] | join("\n\n")
+          | if . == "" then "" else "\n\n" + . end
+        );
+
+  def body_for(is_bot):
+    (.body // "") as $b
+    | if is_bot then ""
+      elif ($b | length) == 0 then ""
+      elif ($b | length) > 2000 then ($b | strip_md | first_para_plus_bullets) + "\n\n[truncated]"
+      else ($b | strip_md)
+      end;
+
+  def is_bot:
+    (.author.__typename // "") == "Bot"
+    or ((.author.login // "") | test("\\[bot\\]$"));
+
+  def author_handle:
+    (.author.login // "ghost") as $l
+    | if is_bot then
+        if ($l | test("\\[bot\\]$")) then "@" + $l else "@" + $l + " [bot]" end
+      else "@" + $l
+      end;
+
+  def pr_activity_in_window($since):
+    [.createdAt, .mergedAt, .closedAt,
+     (.reviews.nodes[]?.submittedAt),
+     (.comments.nodes[]?.createdAt)]
+    | map(select(. != null and . >= $since))
+    | length > 0;
+
+  def issue_activity_in_window($since):
+    [.createdAt, .closedAt, (.comments.nodes[]?.createdAt)]
+    | map(select(. != null and . >= $since))
+    | length > 0;
+
+  def review_summary:
+    (.reviews.nodes // [])
+    | group_by(.state)
+    | map({state: .[0].state, n: length})
+    | map("\(.n) \(.state | ascii_downcase)")
+    | join(", ");
+
+  .data.repository as $r
+  | ($r.pullRequests.nodes | map(select(pr_activity_in_window($since)))) as $prs
+  | ($r.issues.nodes      | map(select(issue_activity_in_window($since)))) as $issues
+  | {
+      repo: $r.nameWithOwner,
+      prs_merged:      [$prs[]   | select(.mergedAt  != null and .mergedAt  >= $since)],
+      prs_opened:      [$prs[]   | select(.createdAt >= $since and (.mergedAt == null))],
+      prs_closed_unmerged: [$prs[] | select(.closedAt != null and .closedAt >= $since
+                                            and .mergedAt == null
+                                            and (.createdAt < $since))],
+      prs_touched_open: [$prs[]  | select(.state == "OPEN" and .createdAt < $since)],
+      issues_opened:   [$issues[] | select(.createdAt >= $since)],
+      issues_closed:   [$issues[] | select(.closedAt != null and .closedAt >= $since
+                                           and .createdAt < $since)],
+      issues_touched:  [$issues[] | select(.state == "OPEN" and .createdAt < $since)],
+    }
+  | . as $b
+  | {
+      repo: .repo,
+      counts: {
+        prs_merged: ($b.prs_merged | length),
+        prs_opened: ($b.prs_opened | length),
+        prs_closed_unmerged: ($b.prs_closed_unmerged | length),
+        prs_touched_open: ($b.prs_touched_open | length),
+        issues_opened: ($b.issues_opened | length),
+        issues_closed: ($b.issues_closed | length),
+        issues_touched: ($b.issues_touched | length),
+      },
+      prs_merged: [$b.prs_merged[] | {
+        n: .number, title, url, author: author_handle, bot: is_bot,
+        adds: .additions, dels: .deletions, files: .changedFiles,
+        reviews: review_summary,
+        body: body_for(is_bot),
+      }],
+      prs_opened: [$b.prs_opened[] | {
+        n: .number, title, url, author: author_handle, bot: is_bot, draft: .isDraft,
+        adds: .additions, dels: .deletions, files: .changedFiles,
+        body: body_for(is_bot),
+      }],
+      prs_closed_unmerged: [$b.prs_closed_unmerged[] | {
+        n: .number, title, url, author: author_handle, bot: is_bot,
+      }],
+      prs_touched_open: [$b.prs_touched_open[] | {
+        n: .number, title, url, author: author_handle, bot: is_bot,
+        recent_reviews: ([.reviews.nodes[]? | select(.submittedAt >= $since)] | length),
+        recent_comments: ([.comments.nodes[]? | select(.createdAt >= $since)] | length),
+      }],
+      issues_opened: [$b.issues_opened[] | {
+        n: .number, title, url, author: author_handle, bot: is_bot,
+        body: body_for(is_bot),
+      }],
+      issues_closed: [$b.issues_closed[] | {
+        n: .number, title, url, author: author_handle, bot: is_bot,
+      }],
+      issues_touched: [$b.issues_touched[] | {
+        n: .number, title, url, author: author_handle, bot: is_bot,
+        recent_comments: ([.comments.nodes[]? | select(.createdAt >= $since)] | length),
+      }],
+    }
+')
+
+# ---------- prompt assembly ----------
+# Emit markdown-ish prompt. Define renderer funcs that take an array and produce
+# a section block; jq filter-as-arg gymnastics are avoided by passing arrays directly.
+prompt=$(echo "$NORMALIZED" | jq -r --arg since "$SINCE" '
+  def indent_body:
+    if (. // "") == "" then "" else "  Body:\n" + (split("\n") | map("    " + .) | join("\n")) + "\n" end;
+
+  def pr_merged_lines:
+    map(
+      "- [#\(.n)] \(.title) — \(.author) — +\(.adds)/-\(.dels) across \(.files) files\n" +
+      "  URL: \(.url)\n" +
+      "  Reviews: \(if (.reviews // "") == "" then "none" else .reviews end)\n" +
+      (.body | indent_body)
+    ) | join("\n");
+
+  def pr_opened_lines:
+    map(
+      "- [#\(.n)] \(.title) — \(.author)\(if .draft then " [draft]" else "" end) — +\(.adds)/-\(.dels) across \(.files) files\n" +
+      "  URL: \(.url)\n" +
+      (.body | indent_body)
+    ) | join("\n");
+
+  def pr_simple_lines:
+    map("- [#\(.n)] \(.title) — \(.author)\n  URL: \(.url)\n") | join("\n");
+
+  def pr_touched_lines:
+    map(
+      "- [#\(.n)] \(.title) — \(.author)\n" +
+      "  URL: \(.url)\n" +
+      "  Recent activity in window: \(.recent_reviews) review(s), \(.recent_comments) comment(s)\n"
+    ) | join("\n");
+
+  def issue_opened_lines:
+    map(
+      "- [#\(.n)] \(.title) — \(.author)\n" +
+      "  URL: \(.url)\n" +
+      (.body | indent_body)
+    ) | join("\n");
+
+  def issue_simple_lines:
+    map("- [#\(.n)] \(.title) — \(.author)\n  URL: \(.url)\n") | join("\n");
+
+  def issue_touched_lines:
+    map(
+      "- [#\(.n)] \(.title) — \(.author)\n" +
+      "  URL: \(.url)\n" +
+      "  Recent activity in window: \(.recent_comments) comment(s)\n"
+    ) | join("\n");
+
+  def hdr($title; $items): if ($items | length) == 0 then "" else "##### \($title)\n\n" + $items + "\n" end;
+
+  # Split each bucket into humans / bots for the prompt
+  (.prs_merged          | map(select(.bot | not))) as $prs_merged_h |
+  (.prs_merged          | map(select(.bot)))       as $prs_merged_b |
+  (.prs_opened          | map(select(.bot | not))) as $prs_opened_h |
+  (.prs_opened          | map(select(.bot)))       as $prs_opened_b |
+  (.prs_closed_unmerged | map(select(.bot | not))) as $prs_closed_h |
+  (.prs_closed_unmerged | map(select(.bot)))       as $prs_closed_b |
+  (.prs_touched_open    | map(select(.bot | not))) as $prs_touched_h |
+  (.prs_touched_open    | map(select(.bot)))       as $prs_touched_b |
+  (.issues_opened       | map(select(.bot | not))) as $iss_opened_h |
+  (.issues_opened       | map(select(.bot)))       as $iss_opened_b |
+  (.issues_closed       | map(select(.bot | not))) as $iss_closed_h |
+  (.issues_closed       | map(select(.bot)))       as $iss_closed_b |
+  (.issues_touched      | map(select(.bot | not))) as $iss_touched_h |
+  (.issues_touched      | map(select(.bot)))       as $iss_touched_b |
+
+  "You are writing a daily team standup summary for the GitHub repository \(.repo), covering activity since \($since).\n\n" +
+  "Write a concise narrative summary suitable for a team standup. Cover:\n" +
+  "- What shipped (merged PRs, with PR numbers + links)\n" +
+  "- What is in flight (open PRs with recent activity)\n" +
+  "- Issues opened or closed worth flagging\n" +
+  "- Notable reviews or discussions\n" +
+  "- Anything risky: reverts, hotfixes, WIP merges, unusually large diffs\n\n" +
+  "Group human activity into one cohesive narrative. At the end, add a short \"### Automated activity\" section summarizing bot activity (dependabot, renovate, github-actions, etc.) in aggregate — do not list every bot PR individually unless it is significant (e.g. a major version bump or a security advisory).\n\n" +
+  "Use markdown. Link PRs and issues by number, e.g. [#123](url). Keep the human section under 400 words.\n\n" +
+  "---\n\n" +
+  "## Event log\n\n" +
+  "Repo: \(.repo)\n" +
+  "Window: \($since) → now\n" +
+  "Counts: " +
+    "\(.counts.prs_merged) merged, " +
+    "\(.counts.prs_opened) opened, " +
+    "\(.counts.prs_closed_unmerged) closed-unmerged, " +
+    "\(.counts.prs_touched_open) PRs touched-still-open; " +
+    "\(.counts.issues_opened) issues opened, " +
+    "\(.counts.issues_closed) issues closed, " +
+    "\(.counts.issues_touched) issues touched-still-open\n\n" +
+
+  "### Human activity\n\n" +
+  "#### Pull requests\n\n" +
+  hdr("Merged in window";              $prs_merged_h  | pr_merged_lines) +
+  hdr("Opened in window";              $prs_opened_h  | pr_opened_lines) +
+  hdr("Closed unmerged";               $prs_closed_h  | pr_simple_lines) +
+  hdr("Open with activity in window";  $prs_touched_h | pr_touched_lines) +
+  "#### Issues\n\n" +
+  hdr("Opened in window";              $iss_opened_h  | issue_opened_lines) +
+  hdr("Closed in window";              $iss_closed_h  | issue_simple_lines) +
+  hdr("Open with activity in window";  $iss_touched_h | issue_touched_lines) +
+
+  "### Automated activity (raw)\n\n" +
+  "#### Pull requests\n\n" +
+  hdr("Merged in window";              $prs_merged_b  | pr_simple_lines) +
+  hdr("Opened in window";              $prs_opened_b  | pr_simple_lines) +
+  hdr("Closed unmerged";               $prs_closed_b  | pr_simple_lines) +
+  hdr("Open with activity in window";  $prs_touched_b | pr_touched_lines) +
+  "#### Issues\n\n" +
+  hdr("Opened in window";              $iss_opened_b  | issue_simple_lines) +
+  hdr("Closed in window";              $iss_closed_b  | issue_simple_lines) +
+  hdr("Open with activity in window";  $iss_touched_b | issue_touched_lines)
+')
+
+printf '%s\n' "$prompt"
