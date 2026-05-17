@@ -1,0 +1,32 @@
+{{- $inner := .Page.RenderString (dict "display" "block") .Inner -}}
+<div class="clickwall" data-clickwall data-clickwall-key="{{ .Page.RelPermalink }}">
+  <div class="clickwall-gate" data-clickwall-gate>
+    <div class="clickwall-gate-inner">
+      <p class="clickwall-title">
+        <i class="fa-solid fa-robot" aria-hidden="true"></i>
+        AI-generated content ahead
+      </p>
+      <p class="clickwall-body">
+        Everything below this point was written by an AI model (with my steering and editing).
+        It may be confidently wrong. Treat it as a thinking trail, not expert advice.
+      </p>
+      <button type="button" class="clickwall-accept" data-clickwall-accept>
+        Show me the AI content
+      </button>
+    </div>
+  </div>
+  <div class="clickwall-gate clickwall-gate-hint" data-clickwall-hint>
+    <div class="clickwall-gate-inner">
+      <p class="clickwall-title">
+        <i class="fa-solid fa-robot" aria-hidden="true"></i>
+        You've seen this before
+      </p>
+      <p class="clickwall-body">
+        Still AI-generated. Hover (or tap) to reveal.
+      </p>
+    </div>
+  </div>
+  <div class="clickwall-content" data-clickwall-content aria-hidden="true">
+    {{ $inner }}
+  </div>
+</div>
