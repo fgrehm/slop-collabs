@@ -57,6 +57,12 @@ has_opt() {
   return 1
 }
 
+# Blocking options make `zellij run` block and suppress the pane id on stdout,
+# which zellicat needs. zellicat does its own waiting, so reject them outright.
+has_opt --block-until-exit --block-until-exit-failure \
+        --block-until-exit-success --blocking \
+  && die "blocking options conflict with zellicat; it waits for the command itself"
+
 has_opt --stacked --floating -f --in-place -i -d --direction || runopts+=(--stacked)
 has_opt -c --close-on-exit                                   || runopts+=(-c)
 has_opt -n --name                                            || runopts+=(-n "zellicat: ${cmd[*]}")
@@ -74,13 +80,11 @@ rc="$workdir/rc"
 # knows the capture is complete.
 pane_script="\"\$@\" 2>&1 | tee -- $(printf %q "$out"); echo \"\${PIPESTATUS[0]}\" > $(printf %q "$rc")"
 
-pane_id=$(zellij run "${runopts[@]}" -- bash -c "$pane_script" zellicat "${cmd[@]}") \
+# `zellij run` prints the new pane id, but zellicat does not need it: it waits
+# on the $rc file the pane writes. The id is also suppressed when -c closes a
+# fast pane before `zellij run` reports back, so we just ignore stdout here.
+zellij run "${runopts[@]}" -- bash -c "$pane_script" zellicat "${cmd[@]}" >/dev/null \
   || die "zellij run failed"
-
-case "$pane_id" in
-  terminal_*|[0-9]*) ;;
-  *) die "unexpected output from 'zellij run': ${pane_id:-<empty>}" ;;
-esac
 
 # --- wait for completion ----------------------------------------------------
 # ZELLICAT_TIMEOUT (seconds) guards against a pane that is force-closed before
