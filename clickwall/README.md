@@ -1,6 +1,7 @@
 # clickwall
 
-> *WARNING: This was done in a single 30m Claude Code session with Opus 4.7 on 2026-05-17 on top of [fabiorehm.com](https://github.com/fgrehm/fabiorehm.com). More info on [decisions.md](./decisions.md).*
+> [!WARNING]
+> This was done in a single 30m Claude Code session with Opus 4.7 on 2026-05-17 on top of [fabiorehm.com](https://github.com/fgrehm/fabiorehm.com). More info on [decisions.md](./decisions.md).
 
 A tiny Hugo paired shortcode that gates AI-generated sections of a blog post behind a "click to reveal" panel, TOS-style. After a reader accepts once, subsequent visits to the same post show a softer "you've seen this before" panel that unblurs on hover (or tap).
 

@@ -1,5 +1,8 @@
 # zellicat
 
+> [!WARNING]
+> This was done over a single 10min Claude Code session with Opus 4.7 on 2026-05-19.
+
 Run a command in a stacked [zellij](https://zellij.dev) pane and capture its output as if you had run it directly.
 
 zellij can launch a command in a pane, but it cannot hand that command's output back to the caller. There is an open PR for this ([zellij-org/zellij#4630](https://github.com/zellij-org/zellij/pull/4630)); until it lands in a release, `zellicat` fakes it.

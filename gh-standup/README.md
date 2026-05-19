@@ -1,6 +1,7 @@
 # gh-standup
 
-> *WARNING: This was done over a single 20min claude.ai session with Opus 4.7 on 2026-05-15, more info on [decisions.md](./decisions.md)*
+> [!WARNING]
+> This was done over a single 20min claude.ai session with Opus 4.7 on 2026-05-15. More info on [decisions.md](./decisions.md).
 
 A small bash CLI that emits an LLM-ready prompt summarizing recent GitHub repo activity. Pipe the output to any LLM to get a daily standup.
 
