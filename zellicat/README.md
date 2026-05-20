@@ -29,6 +29,9 @@ zellicat -- ./flaky-test.sh || echo "test failed"
 
 # forward options to `zellij run` (here: a floating pane instead of stacked)
 zellicat --floating -- ./pick-a-thing.sh
+
+# edit something in nvim and capture the output
+zellicat -- sh -c 'nvim test.md && cat test.md > "$ZELLICAT_OUT"'
 ```
 
 ## How it works
