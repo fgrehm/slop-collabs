@@ -1,11 +1,11 @@
 # zellicat
 
 > [!WARNING]
-> This was done over a single 10min Claude Code session with Opus 4.7 on 2026-05-19.
+> This was done over a single 30min Claude Code session with Opus 4.7 on 2026-05-19.
 
-Run a command in a stacked [zellij](https://zellij.dev) pane and capture its output as if you had run it directly.
+Run a command in a [zellij](https://zellij.dev) pane and capture its result.
 
-zellij can launch a command in a pane, but it cannot hand that command's output back to the caller. There is an open PR for this ([zellij-org/zellij#4630](https://github.com/zellij-org/zellij/pull/4630)); until it lands in a release, `zellicat` fakes it.
+zellij can launch a command in a pane, but it cannot hand that command's result back to the caller. There is an open PR for this ([zellij-org/zellij#4630](https://github.com/zellij-org/zellij/pull/4630)); until it lands in a release, `zellicat` fakes it.
 
 ## Usage
 
@@ -14,24 +14,36 @@ zellicat [zellij-run options] -- COMMAND [ARGS...]
 zellicat COMMAND [ARGS...]
 ```
 
+The command runs in the pane with a real, untouched tty, and reports its result by writing to the file named in the `$ZELLICAT_OUT` environment variable. `zellicat` prints that file once the command exits, and exits with its code.
+
 ```sh
-# capture into a variable, see it run live in a stacked pane
-result=$(zellicat -- ./long-build.sh)
+# capture a result into a variable
+result=$(zellicat -- sh -c 'echo "the answer" > "$ZELLICAT_OUT"')
+
+# the command can run a full TUI (editor, picker) and still report a result;
+# the pane is a real terminal, so the TUI -- mouse and all -- just works
+picked=$(zellicat -- sh -c 'fzf > "$ZELLICAT_OUT"')
 
 # exit code is propagated
-zellicat -- some-flaky-test || echo "test failed"
+zellicat -- ./flaky-test.sh || echo "test failed"
 
 # forward options to `zellij run` (here: a floating pane instead of stacked)
-zellicat --floating -- htop
+zellicat --floating -- ./pick-a-thing.sh
 ```
 
 ## How it works
 
-1. `zellicat` runs your command in a new pane via `zellij run`, wrapped so the pane executes `COMMAND 2>&1 | tee tmpfile; echo $? > rcfile`.
-2. `tee` keeps the output visible live in the pane *and* writes a byte-exact copy to a temp file. Because `tee` sits in the pipeline, the shell waits for it to flush before recording the exit code.
-3. `zellicat` waits for the exit-code file to appear, prints the captured output to its own stdout, and exits with the command's exit code.
+This is the trick from [revdiff](https://github.com/umputun/revdiff)'s terminal launcher.
 
-This avoids `zellij action dump-screen`, which only returns the *rendered* viewport (long lines wrapped to pane width, not raw bytes).
+Capturing a command's stdout means piping it, and a pipe is not a tty. Terminal programs (`nvim`, `fzf`, anything with a UI) negotiate with their terminal over that same stdout, so piping it garbles or breaks them. You cannot both capture stdout and keep it a tty.
+
+So `zellicat` does not touch stdout at all:
+
+1. It writes a small launch script and runs it via `zellij run`. The script runs your command with stdin, stdout and stderr all on the pane's real tty.
+2. Your command writes whatever should be captured to `$ZELLICAT_OUT` (a temp file `zellicat` created and exported), then exits. The launch script records the exit code in a sentinel file.
+3. `zellicat` waits for the sentinel, prints `$ZELLICAT_OUT`, and exits with the command's exit code.
+
+The result travels back out-of-band, so the command's terminal is never disturbed.
 
 ## Defaults and overrides
 
@@ -45,8 +57,8 @@ This avoids `zellij action dump-screen`, which only returns the *rendered* viewp
 
 ## Limitations
 
-- stdout and stderr are merged into one stream.
-- The command does not receive `zellicat`'s stdin.
+- The command must opt in to being captured by writing to `$ZELLICAT_OUT`. Plain stdout is *not* captured: it shows live in the pane and is discarded.
+- A bare command that only writes to stdout (`zellicat -- echo hi`) captures nothing. Redirect it: `zellicat -- sh -c 'echo hi > "$ZELLICAT_OUT"'`.
 - Output is emitted only after the command exits, not streamed line by line.
 - Must be run from inside a zellij session.
 
