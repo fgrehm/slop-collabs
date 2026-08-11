@@ -25,7 +25,9 @@ if (process.env.ZELLIJ || process.env.ZELLIJ_SESSION_NAME || process.env.ZELLIJ_
   process.exit(1)
 }
 
-// Load every cached image. The viewer only ever sees a directory of files.
+// Only image metadata is held in memory; renderables are created on demand
+// for the visible window and destroyed when they scroll away, so a large
+// gallery doesn't keep every decoded image alive.
 const images = readdirSync(CACHE_DIR)
   .filter((f) => /\.(jpe?g|png|gif|webp)$/i.test(f))
   .sort()
@@ -38,7 +40,8 @@ if (images.length === 0) {
 
 const GAP = 1
 const COL_MIN_WIDTH = 16
-const CELL_ASPECT = 1 // cell width : height in pixels; square cells, all photos cover-cropped to this
+const CELL_ASPECT = 1 // cell width : height in pixels; square cells, cover-cropped
+const BUFFER_ROWS = 3 // rows kept alive above/below the viewport for smooth scrolling
 
 const renderer = await createCliRenderer({
   exitOnCtrlC: false,
@@ -55,7 +58,6 @@ function cellAspectRatio() {
   return (res.height / renderer.height) / (res.width / renderer.width)
 }
 
-let cols = 1
 let selected = 0
 
 const root = new BoxRenderable(renderer, {
@@ -149,111 +151,161 @@ function closeViewer() {
   highlight()
 }
 
-const cellBoxes: BoxRenderable[] = []
-let contentBox: BoxRenderable | null = null
-
 function updateHeader() {
   header.content = `phototui - ${images.length} photos - arrows to move, enter to open, q to quit`
 }
 
-function computeCols() {
+// --- Grid geometry -------------------------------------------------------
+
+// Grid metrics, recomputed on resize. cols is the column count; colWidths[c]
+// and colLefts[c] give each column's width and x offset (leftover columns
+// spread the remainder so rows fill the full width); cellH is the row height
+// in terminal rows; totalHeight is the full scrollable height.
+let cols = 1
+let cellH = 1
+let totalHeight = 1
+let colWidths: number[] = []
+let colLefts: number[] = []
+
+function computeGrid() {
   const maxCols = Math.max(1, Math.floor(renderer.width / COL_MIN_WIDTH))
   cols = Math.min(maxCols, images.length)
+  if (cols < 1) cols = 1
+
+  const base = Math.max(1, Math.floor((renderer.width - (cols - 1) * GAP) / cols))
+  const leftover = Math.max(0, renderer.width - (cols * base + (cols - 1) * GAP))
+  colWidths = []
+  colLefts = []
+  let x = 0
+  for (let c = 0; c < cols; c++) {
+    colWidths.push(base + (c < leftover ? 1 : 0))
+    colLefts.push(x)
+    x += colWidths[c]! + GAP
+  }
+  cellH = Math.max(1, Math.round(base / (CELL_ASPECT * cellAspectRatio())))
+  const rows = Math.ceil(images.length / cols)
+  totalHeight = rows * cellH + (rows - 1) * GAP
 }
 
-// Base cell width (cols cells + gaps fit within the terminal width), plus the
-// leftover columns spread across the first cells of each row so every row
-// fills the full width edge-to-edge instead of leaving a ragged gap.
-function baseCellWidth() {
-  return Math.max(1, Math.floor((renderer.width - (cols - 1) * GAP) / cols))
+function rowOf(i: number) {
+  return Math.floor(i / cols)
+}
+function colOf(i: number) {
+  return i % cols
+}
+function cellTop(i: number) {
+  return rowOf(i) * (cellH + GAP)
 }
 
-function leftoverCols() {
-  const w = renderer.width
-  const used = cols * baseCellWidth() + (cols - 1) * GAP
-  return Math.max(0, w - used)
-}
+// --- Virtualization ------------------------------------------------------
 
-function cellWidth(col: number) {
-  return baseCellWidth() + (col < leftoverCols() ? 1 : 0)
-}
+// Only cells within the visible window (plus a buffer) are alive; the rest
+// are destroyed so their decoded images are freed.
+const cells = new Map<number, BoxRenderable>()
+let contentBox: BoxRenderable | null = null
 
-function cellHeight() {
-  // CELL_ASPECT is the desired cell shape in *pixels* (width : height). Because
-  // terminal cells are taller than they are wide, we divide by cellAspectRatio
-  // so a landscape cell stays landscape in pixels and landscape photos
-  // aren't cropped into portrait.
-  return Math.max(1, Math.round(baseCellWidth() / (CELL_ASPECT * cellAspectRatio())))
-}
-
-function highlight() {
-  cellBoxes.forEach((cell, i) => {
-    cell.border = i === selected
-    cell.borderColor = i === selected ? "#f38ba8" : "transparent"
+function createCell(i: number): BoxRenderable {
+  const col = colOf(i)
+  const cell = new BoxRenderable(renderer, {
+    id: `cell-${i}`,
+    position: "absolute",
+    left: colLefts[col]!,
+    top: cellTop(i),
+    width: colWidths[col]!,
+    height: cellH,
+    borderStyle: "rounded",
+    border: i === selected,
+    borderColor: i === selected ? "#f38ba8" : "transparent",
   })
-  grid.scrollTo({ x: 0, y: Math.floor(selected / cols) * (cellHeight() + GAP) })
+  const { file, source } = images[i]!
+  const image = new ImageRenderable(renderer, {
+    id: `thumb-${i}`,
+    source,
+    width: "100%",
+    height: "100%",
+    fit: "cover",
+    protocol: "auto",
+    onError: (err) => console.error(`failed to load ${file}:`, err),
+  })
+  cell.add(image)
+  contentBox!.add(cell)
+  return cell
+}
+
+function destroyCell(i: number) {
+  const cell = cells.get(i)
+  if (!cell) return
+  cell.destroyRecursively() // disposes the decoded NativeImage
+  cells.delete(i)
+}
+
+function visibleRange() {
+  const top = grid.scrollTop
+  const viewH = grid.viewport.height
+  const firstRow = Math.max(0, Math.floor((top - BUFFER_ROWS * (cellH + GAP)) / (cellH + GAP)))
+  const lastRow = Math.ceil((top + viewH + BUFFER_ROWS * (cellH + GAP)) / (cellH + GAP))
+  const first = firstRow * cols
+  const last = Math.min(images.length, lastRow * cols + cols) - 1
+  return [Math.max(0, first), Math.max(0, last)] as const
+}
+
+let dirty = true
+let lastScrollTop = -1
+let lastWidth = -1
+let lastHeight = -1
+
+function reconcile() {
+  if (!contentBox) return
+  const [first, last] = visibleRange()
+
+  // Destroy cells that have left the window.
+  for (const i of [...cells.keys()]) {
+    if (i < first || i > last) destroyCell(i)
+  }
+  // Create cells that have entered the window.
+  for (let i = first; i <= last; i++) {
+    if (!cells.has(i)) cells.set(i, createCell(i))
+  }
 }
 
 function rebuildGrid() {
+  // Destroy every live cell and the content box, then rebuild the content
+  // box at the full scrollable height so the scrollbar range is correct even
+  // though only a sparse set of cells is alive at any time.
+  for (const i of [...cells.keys()]) destroyCell(i)
   contentBox?.destroyRecursively()
-  cellBoxes.length = 0
+  cells.clear()
 
   contentBox = new BoxRenderable(renderer, {
     id: "grid-content",
+    position: "relative",
     width: "100%",
-    flexDirection: "column",
+    height: totalHeight,
     flexShrink: 0,
   })
   grid.content.add(contentBox)
 
-  const h = cellHeight()
-
-  for (let start = 0; start < images.length; start += cols) {
-    const row = new BoxRenderable(renderer, {
-      id: `row-${start}`,
-      width: "100%",
-      flexDirection: "row",
-      flexShrink: 0,
-      marginBottom: GAP,
-    })
-    contentBox.add(row)
-
-    for (let i = start; i < Math.min(start + cols, images.length); i++) {
-      const { file, source } = images[i]!
-      const col = i % cols
-      const cell = new BoxRenderable(renderer, {
-        id: `cell-${i}`,
-        width: cellWidth(col),
-        height: h,
-        flexShrink: 0,
-        marginRight: col === cols - 1 || i === images.length - 1 ? 0 : GAP,
-        borderStyle: "rounded",
-        border: false,
-      })
-      row.add(cell)
-
-      const image = new ImageRenderable(renderer, {
-        id: `thumb-${i}`,
-        source,
-        width: "100%",
-        height: "100%",
-        fit: "cover",
-        protocol: "auto",
-        onError: (err) => console.error(`failed to load ${file}:`, err),
-      })
-      cell.add(image)
-
-      cellBoxes.push(cell)
-    }
-  }
-
-  selected = Math.min(selected, images.length - 1)
+  lastScrollTop = -1
+  dirty = true
+  reconcile()
   highlight()
 }
 
+function highlight() {
+  // The selected cell may be off-screen and not alive; ensure it exists so
+  // the border shows after we scroll it into view, then reconcile.
+  if (!cells.has(selected)) cells.set(selected, createCell(selected))
+  for (const [i, cell] of cells) {
+    cell.border = i === selected
+    cell.borderColor = i === selected ? "#f38ba8" : "transparent"
+  }
+  grid.scrollTo({ x: 0, y: cellTop(selected) })
+  dirty = true
+}
+
 function move(dx: number, dy: number) {
-  const row = Math.floor(selected / cols)
-  const col = selected % cols
+  const row = rowOf(selected)
+  const col = colOf(selected)
   let ncol = col + dx
   let nrow = row + dy
   if (ncol < 0) {
@@ -270,7 +322,7 @@ function move(dx: number, dy: number) {
 }
 
 renderer.on("resize", () => {
-  computeCols()
+  computeGrid()
   selected = Math.min(selected, images.length - 1)
   rebuildGrid()
 })
@@ -280,11 +332,25 @@ renderer.on("resize", () => {
 let frameLogging = false
 let lastFrame = 0
 renderer.on("frame", () => {
-  if (!frameLogging) return
-  const now = performance.now()
-  const delta = lastFrame ? now - lastFrame : 0
-  lastFrame = now
-  process.stderr.write(`frame t=${now.toFixed(1)}ms dt=${delta.toFixed(1)}ms\n`)
+  if (frameLogging) {
+    const now = performance.now()
+    const delta = lastFrame ? now - lastFrame : 0
+    lastFrame = now
+    process.stderr.write(`frame t=${now.toFixed(1)}ms dt=${delta.toFixed(1)}ms\n`)
+  }
+
+  // Reconcile the virtualized grid when the scroll position or terminal
+  // size has changed (or when something explicitly marked it dirty, e.g.
+  // selection). Avoids work on idle frames.
+  if (viewerOpen) return
+  const top = grid.scrollTop
+  if (dirty || top !== lastScrollTop || renderer.width !== lastWidth || renderer.height !== lastHeight) {
+    dirty = false
+    lastScrollTop = top
+    lastWidth = renderer.width
+    lastHeight = renderer.height
+    reconcile()
+  }
 })
 
 renderer.keyInput.on("keypress", (key) => {
@@ -356,7 +422,7 @@ renderer.keyInput.on("keypress", (key) => {
 })
 
 updateHeader()
-computeCols()
+computeGrid()
 rebuildGrid()
 renderer.start()
 

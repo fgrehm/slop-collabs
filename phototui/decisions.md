@@ -16,11 +16,37 @@ OpenTUI version pinned to `0.5.1` (same as xtui).
 
 Rationale: keeps the MVP zero-setup, and keeps binaries/images out of the repo. Swapping in a local photo folder or a real Unsplash API client later is trivial because the viewer only ever sees a directory of image files.
 
+## Terminal / multiplexer reality
+
+OpenTUI's `ImageRenderable` auto-detects the protocol. Inside Zellij (released builds) it only forwards Sixel; Ghostty only does Kitty graphics. The protocols don't overlap, so native images silently disappear inside Zellij + Ghostty. We detect Zellij via its env vars (`ZELLIJ` / `ZELLIJ_SESSION_NAME` / `ZELLIJ_PANE_ID`) and bail with a clear message rather than show nothing or an ugly block fallback. Kitty-graphics support landed in Zellij on 2026-07-31 (PR #5428) but is unreleased; once it ships, the guard can go.
+
 ## Layout model
 
-OpenTUI uses a flexbox-style layout. The grid is a uniform grid: `cols = width / 16`, and every cell is the same size (a 3:2 cell, `width / CELL_ASPECT` rows tall). Images are `cover`-cropped to fill their cell, so portrait and landscape photos all present at a consistent size. The full-screen viewer uses `fit: "fit"` to letterbox instead, so the whole photo is visible there.
+OpenTUI uses a flexbox-style layout. The grid is a uniform grid: `cols = width / 16`, every cell the same shape. Images are `cover`-cropped to fill their cell, so portrait and landscape photos present at a consistent size. The full-screen viewer uses `fit: "fit"` to letterbox instead, so the whole photo is visible there.
 
-Each row is a `BoxRenderable` with `flexDirection: "row"`; the grid itself is a `ScrollBoxRenderable`. We tried aspect-preserving masonry (per-image heights from `imageInfo` x `renderer.resolution`) but reverted it in favour of a clean uniform grid.
+Cells are square in **pixels** (`CELL_ASPECT = 1`). The cell height in terminal rows is `round(baseCellWidth / (CELL_ASPECT * cellAspectRatio))` where `cellAspectRatio = (res.height/terminalHeight) / (res.width/terminalWidth)` from `renderer.resolution`. You must divide by `cellAspectRatio` because terminal cells are taller than wide (~2:1): a "3:2 in cells" cell is actually portrait in pixels and crops landscape photos wrong. We tried 3:2 (favored landscape), portrait, and masonry; square is the even-handed choice.
+
+Leftover columns (from flooring the cell width) are spread across the first cells of each row so rows fill the full terminal width edge-to-edge.
+
+## Virtualization and memory
+
+Only image **metadata** is held in memory; renderables are created on demand for the visible window and destroyed when they scroll away. This is required for a large gallery, because `ImageRenderable` decodes its source eagerly on `set source` (`NativeImage.load`) and keeps the decoded image until the renderable is destroyed.
+
+Key points:
+
+- `ImageRenderable.destroySelf()` aborts the in-flight load and calls `NativeImage.dispose()`, so destroying a cell frees its decoded image memory. This is the primitive the virtualizer relies on.
+- `viewportCulling: true` on the `ScrollBoxRenderable` only skips layout/measure for off-screen children; it does **not** free decoded images. So it is not a substitute for virtualization.
+- The content box is given an explicit `height = totalHeight` (all rows) so the scrollbar range is correct even though only a sparse set of cells is alive. Cells are `position: "absolute"` with `top`/`left` so adding/removing them does not reflow the list.
+- A `Map<index, BoxRenderable>` holds live cells. Each frame, if `scrollTop` or terminal size changed, we reconcile: destroy cells outside `[first, last]` (visible range plus a `BUFFER_ROWS` margin), create cells inside it that are missing.
+- `renderer.on("frame", ...)` is the hook; OpenTUI has no scroll event. The reconcile early-returns when nothing changed.
+
+Measured at startup with 46 photos, an 80-col terminal: 20 cells alive (5 cols, cellH 8, totalHeight 89). Scroll keeps the live count bounded to roughly viewport + 2*buffer.
+
+## Gotchas learned
+
+- OpenTUI names the Enter key `return` (keypad `kpenter`), not `enter`. A handler matching `key.name === "enter"` never fires; only `o` worked until we fixed it.
+- `console.log`/`console.error` are captured by OpenTUI's console overlay, not written to stderr, unless `OTUI_USE_CONSOLE=false`. For diagnostics that must reach a file/pipe, use `process.stderr.write` directly (and set `OTUI_USE_CONSOLE=false` when running headless tests), or toggle the overlay with `renderer.console.show()`.
+- The built-in debug overlay (`renderer.toggleDebugOverlay()`, bound to `d`) shows live FPS + memory; `f` toggles per-frame `dt` logging to stderr for measuring outside the overlay (`bun src/index.ts 2>frames.log`).
 
 ## Open questions
 
