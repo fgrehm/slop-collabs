@@ -66,6 +66,7 @@ const GAP = 1
 const COL_MIN_WIDTH = 16
 const CELL_ASPECT = 1 // cell width : height in pixels; square cells, cover-cropped
 const BUFFER_ROWS = 3 // rows kept alive above/below the viewport for smooth scrolling
+const PREFETCH_ROWS = 4 // extra rows prefetched ahead once the selection nears an edge
 
 const renderer = await createCliRenderer({
   exitOnCtrlC: false,
@@ -266,8 +267,25 @@ function destroyCell(i: number) {
 function visibleRange() {
   const top = grid.scrollTop
   const viewH = grid.viewport.height
-  const firstRow = Math.max(0, Math.floor((top - BUFFER_ROWS * (cellH + GAP)) / (cellH + GAP)))
-  const lastRow = Math.ceil((top + viewH + BUFFER_ROWS * (cellH + GAP)) / (cellH + GAP))
+  const stride = cellH + GAP
+  let firstRow = Math.max(0, Math.floor((top - BUFFER_ROWS * stride) / stride))
+  let lastRow = Math.ceil((top + viewH + BUFFER_ROWS * stride) / stride)
+
+  // Prefetch ahead of the selection: once the selected row nears the
+  // visible bottom (or top), extend the live window a few rows further in
+  // that direction so the next cells are already decoded when you move.
+  // Compared in row indices so it stays correct for small viewports.
+  if (viewH > 0) {
+    const selRow = rowOf(selected)
+    const topRow = Math.floor(top / stride)
+    const bottomRow = Math.ceil((top + viewH) / stride)
+    // Extend ahead of the selection only when it sits on (or past) the
+    // visible edge: last visible row -> prefetch below, first visible row
+    // -> prefetch above.
+    if (selRow >= bottomRow - 1) lastRow += PREFETCH_ROWS
+    if (selRow <= topRow + 1) firstRow = Math.max(0, firstRow - PREFETCH_ROWS)
+  }
+
   const first = firstRow * cols
   const last = Math.min(images.length, lastRow * cols + cols) - 1
   return [Math.max(0, first), Math.max(0, last)] as const
@@ -317,13 +335,31 @@ function rebuildGrid() {
 
 function highlight() {
   // The selected cell may be off-screen and not alive; ensure it exists so
-  // the border shows after we scroll it into view, then reconcile.
+  // the border shows, then reconcile.
   if (!cells.has(selected)) cells.set(selected, createCell(selected))
   for (const [i, cell] of cells) {
     cell.border = i === selected
     cell.borderColor = i === selected ? "#f38ba8" : "transparent"
   }
-  grid.scrollTo({ x: 0, y: cellTop(selected) })
+
+  // Only scroll to keep the selection on screen: nudge when it crosses the
+  // bottom edge, snap up when it crosses the top. Stay put otherwise, so
+  // moving within the viewport doesn't yank the scroll position. Skip until
+  // the viewport has a real height (layout not settled yet).
+  const viewH = grid.viewport.height
+  if (viewH > 0) {
+    const stride = cellH + GAP
+    const selTop = cellTop(selected)
+    const selBottom = selTop + cellH
+    const viewTop = grid.scrollTop
+    const viewBottom = viewTop + viewH
+    let target = viewTop
+    if (selBottom > viewBottom) target = selBottom - viewH
+    else if (selTop < viewTop) target = selTop
+    const max = Math.max(0, totalHeight - viewH)
+    target = Math.max(0, Math.min(max, target))
+    if (target !== viewTop) grid.scrollTo({ x: 0, y: target })
+  }
   dirty = true
 }
 
