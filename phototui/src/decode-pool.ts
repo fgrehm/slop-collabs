@@ -27,9 +27,15 @@ export interface DecodeHandle {
 
 export class DecodePool {
   private workers: Worker[]
-  private next: number[] = [] // round-robin cursor kept simple via a counter
   private counter = 0
   private pending: Map<number, (img: DecodedImage | null) => void> = new Map()
+  // LRU cache of downscaled RGBA keyed by path@size. The pixels are tiny
+  // (a few KB each), so we can keep a bounded set in memory and re-upload
+  // them instantly when a cell scrolls back into view, instead of
+  // re-decoding from disk. Evicted by count; a terminal resize changes the
+  // key (size), so stale entries age out naturally.
+  private cache = new Map<string, DecodedImage>()
+  private cacheCap = 300
 
   constructor(size: number) {
     this.workers = []
@@ -51,9 +57,33 @@ export class DecodePool {
     }
   }
 
+  getCached(path: string, targetW: number, targetH: number): DecodedImage | null {
+    const key = `${path}@${targetW}x${targetH}`
+    const hit = this.cache.get(key)
+    if (hit) {
+      // LRU touch: move to the most-recently-used end.
+      this.cache.delete(key)
+      this.cache.set(key, hit)
+    }
+    return hit ?? null
+  }
+
+  private cachePut(path: string, targetW: number, targetH: number, img: DecodedImage) {
+    const key = `${path}@${targetW}x${targetH}`
+    this.cache.delete(key)
+    this.cache.set(key, img)
+    if (this.cache.size > this.cacheCap) {
+      const oldest = this.cache.keys().next().value
+      if (oldest !== undefined) this.cache.delete(oldest)
+    }
+  }
+
   decode(path: string, targetW: number, targetH: number, onDone: (img: DecodedImage | null) => void): DecodeHandle {
     const id = this.counter++
-    this.pending.set(id, onDone)
+    this.pending.set(id, (img) => {
+      if (img) this.cachePut(path, targetW, targetH, img)
+      onDone(img)
+    })
     const worker = this.workers[id % this.workers.length]!
     worker.postMessage({ id, path, targetW, targetH })
     return {

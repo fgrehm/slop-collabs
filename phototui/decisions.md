@@ -61,6 +61,8 @@ OpenTUI's `imageDecode` is a synchronous native (Zig) FFI that blocks the main t
 - A Bun worker can load `@opentui/core`; each worker gets its own instance of the native lib (verified).
 - Pool sized `min(8, max(2, availableParallelism()))`.
 - **Honest tradeoff:** for small images the pool is slower in wall-clock than main-thread decode (worker message overhead), but the win is responsiveness: the main/render thread never blocks. Verified the frame loop holds a steady ~33ms during decoding with a 2046-image gallery.
+- **Scrolling back up/down re-decodes unless we cache.** Cells that leave the window are destroyed (their `NativeImage` disposed), so returning to them re-decodes from disk. Fix: a bounded LRU cache of the *downscaled RGBA bytes* (a few KB each) keyed by `path@targetWxH` (size in the key so a terminal resize doesn't reuse a stale downscale). Re-creating a cell checks the cache first and re-uploads via `fromRgba` (fast) instead of re-decoding. Cap ~300 entries. Verified: first decode is a worker round-trip, second is an instant hit, different size misses.
+- **The prefetch buffer must scale with the terminal height.** How many image-rows are visible is `viewport.height / (cellH + GAP)`; a fixed row buffer is proportionally tiny on a tall terminal. Buffer and prefetch are now `max(min, visibleRows)` so below-the-fold cells are decoded far enough ahead on any terminal size.
 
 ## Gotchas learned
 

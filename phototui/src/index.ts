@@ -300,15 +300,22 @@ function createCell(i: number): LiveCell {
   })
   box.add(image)
   contentBox!.add(box)
+  const cell: LiveCell = { box, image, handle: null }
   // Downscale in the worker to the cell's pixel size so the main thread
   // uploads a tiny image and the terminal receives far fewer bytes per cell
   // (the stdout write is the real frame-time cost, not the render pass).
   const [tw, th] = cellPixelSize(col)
-  const handle = decodePool.decode(source, tw, th, (decoded: { rgba: Uint8Array; width: number; height: number; stride: number } | null) => {
-    if (decoded === null) console.error(`failed to load ${file}`)
-    applyDecoded(cell, decoded)
-  })
-  const cell: LiveCell = { box, image, handle }
+  // Reuse a cached decode if we have one (scrolling back up/down should not
+  // re-decode from disk); otherwise decode via the worker pool.
+  const cached = decodePool.getCached(source, tw, th)
+  if (cached) {
+    applyDecoded(cell, cached)
+  } else {
+    cell.handle = decodePool.decode(source, tw, th, (decoded: { rgba: Uint8Array; width: number; height: number; stride: number } | null) => {
+      if (decoded === null) console.error(`failed to load ${file}`)
+      applyDecoded(cell, decoded)
+    })
+  }
   return cell
 }
 
