@@ -22,6 +22,5 @@ OpenTUI uses a flexbox-style layout. A grid is built from a `BoxRenderable` with
 
 ## Open questions
 
-- Does a single `ImageRenderable` render cleanly in a local terminal (Phase 3)?
-- Does the block fallback look acceptable on a non-Kitty/Sixel terminal?
+- Does the block fallback look acceptable on a non-Kitty/Sixel terminal? (Phase 3: yes, it draws per-cell colored half-blocks; looks good enough to build on)
 - Video: OpenTUI can render animated images via `NativeImage.decode`, but a true video codec is a much bigger lift. Probably out of scope for this POC.

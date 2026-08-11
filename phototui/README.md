@@ -9,7 +9,7 @@ For now: yes, via native terminal image rendering (Kitty graphics, Sixel, or Uni
 
 ## Status
 
-Early spike. Phase 1 (bootstrap skeleton) is in place. Phase 2 (photo fetch) and Phase 3 (image rendering spike) are next. See [TODO](#todo).
+Early spike. Phases 1-3 are done: bootstrap skeleton, photo fetch, and a single-image rendering spike (validated). Next is the responsive grid. See [TODO](#todo).
 
 ## Requirements
 
@@ -36,8 +36,8 @@ See [decisions.md](./decisions.md) for architecture notes and what we learn as w
 
 ## TODO
 
-- [ ] Phase 2: photo fetch script pulling Unsplash images into `./cache/`
-- [ ] Phase 3: spike - render a single image in the terminal, validate premise
+- [x] Phase 2: photo fetch script pulling Unsplash images into `./cache/`
+- [x] Phase 3: spike - render a single image in the terminal, validate premise
 - [ ] Phase 4: responsive terminal grid (column count from width, aspect-aware cells)
 - [ ] Phase 5: keyboard selection with highlight
 - [ ] Phase 5: open a selected image full-screen, navigate between images
