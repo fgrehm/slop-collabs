@@ -9,7 +9,7 @@ For now: yes, via native terminal image rendering (Kitty graphics, Sixel, or Uni
 
 ## Status
 
-Early spike. Bootstrap, photo fetch, a uniform responsive grid with keyboard selection, and a full-screen viewer are all in. See [TODO](#todo).
+Working POC. Uniform responsive grid with keyboard selection, full-screen viewer, and a performance stack tuned for real albums: virtualized grid, worker-pool decoding, disk thumbnail cache, and terminal-height-scaled prefetch. See [TODO](#todo).
 
 ## Requirements
 
@@ -46,8 +46,11 @@ bun run start                    # then watch the `d` overlay while scrolling
 - `src/index.ts` boots the OpenTUI renderer and draws the UI.
 - `scripts/fetch.ts` downloads a hardcoded list of Unsplash image URLs into `./cache/` so nothing is committed to source control. The viewer reads images from disk.
 - Images render through OpenTUI's `ImageRenderable`, which negotiates the best image protocol the terminal supports.
-- The grid is **virtualized**: only cells in the visible window (plus a small buffer) are kept alive, and decoded images are freed when their cell scrolls away, so a large gallery stays bounded in memory.
+- The grid is **virtualized**: only cells in the visible window (plus a prefetch buffer) are kept alive, and decoded images are freed when their cell scrolls away, so a large gallery stays bounded in memory.
+- The prefetch buffer **scales with terminal height** (a full page below the fold, half a page above), so scrolling down never waits on a decode.
 - Images are **decoded in a worker pool** off the render thread and **downscaled to the cell's pixel size** before upload, so the terminal receives far fewer bytes per frame (the stdout write is the real frame-time cost).
+- A **disk thumbnail cache** (`/tmp/phototui-thumbs`, POC location) decodes each full-resolution photo once into a 256px thumbnail; later visits read the tiny file instead of the original. An in-memory LRU of downscaled pixels makes scroll-back instant.
+- Cells show a **spinner** while their decode is pending (visible on first pass through a real album).
 - Keys: arrows/hjkl move, enter/o/space opens a photo, escape/q returns or quits, `d` toggles the OpenTUI debug overlay (FPS + memory), `f` toggles per-frame logging to stderr (measure with `bun src/index.ts 2>frames.log`), `b` dumps a one-shot render-stats breakdown (render vs stdout-write time) to stderr.
 
 ## Layout / decisions
@@ -56,11 +59,11 @@ See [decisions.md](./decisions.md) for architecture notes and what we learn as w
 
 ## TODO
 
-- [x] Phase 2: photo fetch script pulling Unsplash images into `./cache/`
-- [x] Phase 3: spike - render a single image in the terminal, validate premise
-- [x] Phase 4: responsive terminal grid (column count from width, aspect-aware cells)
-- [x] Phase 5: keyboard selection with highlight
-- [x] Phase 5: open a selected image full-screen, navigate between images
+- [ ] Keyboard scrolling: page up/down, `g`/`G`, `Ctrl-d`/`Ctrl-u` (only the mouse wheel scrolls the grid today)
+- [ ] Viewer polish: zoom/pan, image dimensions in the header, fit-vs-fill toggle
+- [ ] `bun run thumbs <dir>` script to pre-generate thumbnails so the first session is instant
+- [ ] Thumbnail cache productionization: move from `/tmp` to XDG_CACHE_HOME, invalidate on source change, handle deleted files
+- [ ] Remove the Zellij startup guard once a Zellij release ships Kitty-graphics support ([PR #5428](https://github.com/zellij-org/zellij/pull/5428))
 - [ ] Stretch: video playback in the terminal
 
 ## License
