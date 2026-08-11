@@ -152,12 +152,25 @@ function computeCols() {
   cols = Math.min(maxCols, images.length)
 }
 
-function cellWidth() {
+// Base cell width (cols cells + gaps fit within the terminal width), plus the
+// leftover columns spread across the first cells of each row so every row
+// fills the full width edge-to-edge instead of leaving a ragged gap.
+function baseCellWidth() {
   return Math.max(1, Math.floor((renderer.width - (cols - 1) * GAP) / cols))
 }
 
+function leftoverCols() {
+  const w = renderer.width
+  const used = cols * baseCellWidth() + (cols - 1) * GAP
+  return Math.max(0, w - used)
+}
+
+function cellWidth(col: number) {
+  return baseCellWidth() + (col < leftoverCols() ? 1 : 0)
+}
+
 function cellHeight() {
-  return Math.max(1, Math.round(cellWidth() / CELL_ASPECT))
+  return Math.max(1, Math.round(baseCellWidth() / CELL_ASPECT))
 }
 
 function highlight() {
@@ -180,7 +193,6 @@ function rebuildGrid() {
   })
   grid.content.add(contentBox)
 
-  const w = cellWidth()
   const h = cellHeight()
 
   for (let start = 0; start < images.length; start += cols) {
@@ -195,12 +207,13 @@ function rebuildGrid() {
 
     for (let i = start; i < Math.min(start + cols, images.length); i++) {
       const { file, source } = images[i]!
+      const col = i % cols
       const cell = new BoxRenderable(renderer, {
         id: `cell-${i}`,
-        width: w,
+        width: cellWidth(col),
         height: h,
         flexShrink: 0,
-        marginRight: i % cols === cols - 1 || i === images.length - 1 ? 0 : GAP,
+        marginRight: col === cols - 1 || i === images.length - 1 ? 0 : GAP,
         borderStyle: "rounded",
         border: false,
       })
