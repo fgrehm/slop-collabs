@@ -38,7 +38,7 @@ if (images.length === 0) {
 
 const GAP = 1
 const COL_MIN_WIDTH = 16
-const CELL_ASPECT = 3 / 2 // cell width : height; all photos are cover-cropped to this
+const CELL_ASPECT = 1 // cell width : height in pixels; square cells, all photos cover-cropped to this
 
 const renderer = await createCliRenderer({
   exitOnCtrlC: false,
