@@ -4,12 +4,15 @@ import {
   BoxRenderable,
   ConsolePosition,
   ImageRenderable,
+  NativeImage,
   ScrollBoxRenderable,
   TextRenderable,
   createCliRenderer,
 } from "@opentui/core"
 import { readdirSync, statSync } from "node:fs"
+import { availableParallelism } from "node:os"
 import { resolve, join, basename } from "node:path"
+import { DecodePool, type DecodeHandle } from "./decode-pool.ts"
 
 const CACHE_DIR = resolve(import.meta.dir, "..", "cache")
 
@@ -177,17 +180,8 @@ function closeViewer() {
 }
 
 function updateHeader() {
-  if (pendingLoads > 0) {
-    const live = cells.size
-    header.content = `phototui - ${images.length} photos - loading ${live - pendingLoads}/${live} - arrows to move, enter to open, q to quit`
-  } else {
-    header.content = `phototui - ${images.length} photos - arrows to move, enter to open, q to quit`
-  }
+  header.content = `phototui - ${images.length} photos - arrows to move, enter to open, q to quit`
 }
-
-// Decoded images load asynchronously; track how many of the live cells are
-// still pending so the header can show a loading indicator.
-let pendingLoads = 0
 
 // --- Grid geometry -------------------------------------------------------
 
@@ -235,12 +229,33 @@ function cellTop(i: number) {
 
 // Only cells within the visible window (plus a buffer) are alive; the rest
 // are destroyed so their decoded images are freed.
-const cells = new Map<number, BoxRenderable>()
+interface LiveCell {
+  box: BoxRenderable
+  image: ImageRenderable
+  handle: DecodeHandle | null
+}
+const cells = new Map<number, LiveCell>()
 let contentBox: BoxRenderable | null = null
 
-function createCell(i: number): BoxRenderable {
+// Decode workers so image decoding runs off the main/render thread. Sized to
+// the available cores, capped so we don't spawn dozens for tiny galleries.
+// Decode workers so image decoding runs off the main/render thread. Sized to
+// the available cores, capped so we don't spawn dozens for tiny galleries.
+const decodePool = new DecodePool(Math.min(8, Math.max(2, availableParallelism())))
+
+function applyDecoded(cell: LiveCell, img: { rgba: Uint8Array; width: number; height: number; stride: number } | null) {
+  if (cell.image.isDestroyed) return
+  if (!img) return
+  // Inject the off-thread-decoded pixels as a NativeImage without going
+  // through `source` (which would re-decode on the main thread).
+  ;(cell.image as unknown as { _image: NativeImage | null })._image =
+    NativeImage.fromRgba(img.rgba, img.width, img.height, img.stride)
+  ;(cell.image as unknown as { requestRender: () => void }).requestRender()
+}
+
+function createCell(i: number): LiveCell {
   const col = colOf(i)
-  const cell = new BoxRenderable(renderer, {
+  const box = new BoxRenderable(renderer, {
     id: `cell-${i}`,
     position: "absolute",
     left: colLefts[col]!,
@@ -252,34 +267,31 @@ function createCell(i: number): BoxRenderable {
     borderColor: i === selected ? "#f38ba8" : "transparent",
   })
   const { file, source } = images[i]!
-  pendingLoads++
-  updateHeader()
+  // source: undefined so OpenTUI does not decode on the main thread; we feed
+  // it the already-decoded RGBA from a worker instead.
   const image = new ImageRenderable(renderer, {
     id: `thumb-${i}`,
-    source,
+    source: undefined,
     width: "100%",
     height: "100%",
     fit: "cover",
     protocol: "auto",
-    onLoad: () => {
-      if (pendingLoads > 0) pendingLoads--
-      updateHeader()
-    },
-    onError: (err) => {
-      if (pendingLoads > 0) pendingLoads--
-      updateHeader()
-      console.error(`failed to load ${file}:`, err)
-    },
   })
-  cell.add(image)
-  contentBox!.add(cell)
+  box.add(image)
+  contentBox!.add(box)
+  const handle = decodePool.decode(source, (decoded: { rgba: Uint8Array; width: number; height: number; stride: number } | null) => {
+    if (decoded === null) console.error(`failed to load ${file}`)
+    applyDecoded(cell, decoded)
+  })
+  const cell: LiveCell = { box, image, handle }
   return cell
 }
 
 function destroyCell(i: number) {
   const cell = cells.get(i)
   if (!cell) return
-  cell.destroyRecursively() // disposes the decoded NativeImage
+  cell.handle?.cancel() // drop a still-pending decode result
+  cell.box.destroyRecursively() // disposes the injected NativeImage
   cells.delete(i)
 }
 
@@ -357,8 +369,8 @@ function highlight() {
   // the border shows, then reconcile.
   if (!cells.has(selected)) cells.set(selected, createCell(selected))
   for (const [i, cell] of cells) {
-    cell.border = i === selected
-    cell.borderColor = i === selected ? "#f38ba8" : "transparent"
+    cell.box.border = i === selected
+    cell.box.borderColor = i === selected ? "#f38ba8" : "transparent"
   }
 
   // Only scroll to keep the selection on screen: nudge when it crosses the
@@ -494,6 +506,7 @@ renderer.keyInput.on("keypress", (key) => {
       break
     case "q":
     case "escape":
+      decodePool.destroy()
       renderer.destroy()
       process.exit(0)
       break
@@ -506,6 +519,7 @@ rebuildGrid()
 renderer.start()
 
 process.once("SIGINT", () => {
+  decodePool.destroy()
   renderer.destroy()
   process.exit(0)
 })
