@@ -68,7 +68,6 @@ if (images.length === 0) {
 const GAP = 1
 const COL_MIN_WIDTH = 16
 const CELL_ASPECT = 1 // cell width : height in pixels; square cells, cover-cropped
-const BUFFER_ROWS = 3 // minimum rows kept alive above/below the viewport (scales with terminal height)
 const PREFETCH_ROWS = 4 // minimum extra rows prefetched once the selection nears an edge (scales with terminal height)
 
 const renderer = await createCliRenderer({
@@ -346,14 +345,16 @@ function visibleRange() {
   const top = grid.scrollTop
   const viewH = grid.viewport.height
   const stride = cellH + GAP
-  // The buffer and prefetch scale with the terminal: how many image-rows are
-  // visible depends on the viewport height, so a fixed row count would be
-  // proportionally tiny on a tall terminal (and waste memory on a short one).
+  // How many image-rows are visible depends on the viewport height, so the
+  // prefetch scales with the terminal instead of being a fixed row count.
   const visibleRows = viewH > 0 ? Math.max(1, Math.ceil(viewH / stride)) : 1
-  const buffer = Math.max(BUFFER_ROWS, visibleRows)
+  // Prefetch below the fold so scrolling down never waits on a decode: at
+  // least 2 rows, or a full page on taller terminals. Above stays modest.
+  const below = Math.max(2, visibleRows)
+  const above = Math.max(2, Math.round(visibleRows / 2))
   const prefetch = Math.max(PREFETCH_ROWS, visibleRows)
-  let firstRow = Math.max(0, Math.floor((top - buffer * stride) / stride))
-  let lastRow = Math.ceil((top + viewH + buffer * stride) / stride)
+  let firstRow = Math.max(0, Math.floor((top - above * stride) / stride))
+  let lastRow = Math.ceil((top + viewH + below * stride) / stride)
 
   // Prefetch ahead of the selection: once the selected row nears the
   // visible bottom (or top), extend the live window a few rows further in
