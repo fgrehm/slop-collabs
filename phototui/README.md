@@ -16,6 +16,9 @@ Early spike. Phases 1-3 are done: bootstrap skeleton, photo fetch, and a single-
 - [Bun](https://bun.sh) 1.3 or newer
 - A terminal with Kitty or Sixel graphics for native images; others fall back to block rendering
 
+> [!CAUTION]
+> phototui won't render native images inside Zellij yet: released Zellij builds only forward Sixel, which Ghostty and several other terminals don't support. The app bails with a clear message rather than show nothing. Run it in a plain terminal tab (Ghostty handles Kitty graphics natively), or use a Zellij build with the [2026-07-31 kitty-graphics support](https://github.com/zellij-org/zellij/pull/5428) once it's released.
+
 ## Install / run
 
 ```sh
