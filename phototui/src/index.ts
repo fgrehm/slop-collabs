@@ -177,8 +177,17 @@ function closeViewer() {
 }
 
 function updateHeader() {
-  header.content = `phototui - ${images.length} photos - arrows to move, enter to open, q to quit`
+  if (pendingLoads > 0) {
+    const live = cells.size
+    header.content = `phototui - ${images.length} photos - loading ${live - pendingLoads}/${live} - arrows to move, enter to open, q to quit`
+  } else {
+    header.content = `phototui - ${images.length} photos - arrows to move, enter to open, q to quit`
+  }
 }
+
+// Decoded images load asynchronously; track how many of the live cells are
+// still pending so the header can show a loading indicator.
+let pendingLoads = 0
 
 // --- Grid geometry -------------------------------------------------------
 
@@ -243,6 +252,8 @@ function createCell(i: number): BoxRenderable {
     borderColor: i === selected ? "#f38ba8" : "transparent",
   })
   const { file, source } = images[i]!
+  pendingLoads++
+  updateHeader()
   const image = new ImageRenderable(renderer, {
     id: `thumb-${i}`,
     source,
@@ -250,7 +261,15 @@ function createCell(i: number): BoxRenderable {
     height: "100%",
     fit: "cover",
     protocol: "auto",
-    onError: (err) => console.error(`failed to load ${file}:`, err),
+    onLoad: () => {
+      if (pendingLoads > 0) pendingLoads--
+      updateHeader()
+    },
+    onError: (err) => {
+      if (pendingLoads > 0) pendingLoads--
+      updateHeader()
+      console.error(`failed to load ${file}:`, err)
+    },
   })
   cell.add(image)
   contentBox!.add(cell)
