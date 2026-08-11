@@ -24,7 +24,21 @@ Early spike. Bootstrap, photo fetch, a uniform responsive grid with keyboard sel
 ```sh
 bun install
 bun run fetch   # download the sample Unsplash photos into ./cache (gitignored)
-bun run start   # launch the TUI
+bun run start   # launch the TUI against the sample cache
+```
+
+Point it at your own photos:
+
+```sh
+bun src/index.ts ~/Pictures      # walk a directory recursively
+bun src/index.ts .               # the current directory
+```
+
+Stress-test the virtualized grid with a large synthetic set:
+
+```sh
+bun run scale --count 2000       # duplicate the cached photos to ~2000
+bun run start                    # then watch the `d` overlay while scrolling
 ```
 
 ## How it works

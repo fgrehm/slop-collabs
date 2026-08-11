@@ -8,8 +8,8 @@ import {
   TextRenderable,
   createCliRenderer,
 } from "@opentui/core"
-import { readdirSync } from "node:fs"
-import { resolve } from "node:path"
+import { readdirSync, statSync } from "node:fs"
+import { resolve, join, basename } from "node:path"
 
 const CACHE_DIR = resolve(import.meta.dir, "..", "cache")
 
@@ -28,13 +28,37 @@ if (process.env.ZELLIJ || process.env.ZELLIJ_SESSION_NAME || process.env.ZELLIJ_
 // Only image metadata is held in memory; renderables are created on demand
 // for the visible window and destroyed when they scroll away, so a large
 // gallery doesn't keep every decoded image alive.
-const images = readdirSync(CACHE_DIR)
-  .filter((f) => /\.(jpe?g|png|gif|webp)$/i.test(f))
+//
+// Source: a directory argument (`bun src/index.ts ~/Pictures`) walked
+// recursively, defaulting to the Unsplash sample cache for `bun run start`.
+const IMAGE_EXT = /\.(jpe?g|png|gif|webp)$/i
+const SOURCE_DIR = resolve(process.argv[2] ?? CACHE_DIR)
+
+function walk(dir: string, out: string[]) {
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name)
+    let st
+    try {
+      st = statSync(path)
+    } catch {
+      continue
+    }
+    if (st.isDirectory()) walk(path, out)
+    else if (IMAGE_EXT.test(name)) out.push(path)
+  }
+}
+
+const files: string[] = []
+if (statSync(SOURCE_DIR, { throwIfNoEntry: false })?.isDirectory()) walk(SOURCE_DIR, files)
+const images = files
   .sort()
-  .map((file) => ({ file, source: resolve(CACHE_DIR, file) }))
+  .map((path) => ({ file: basename(path), source: path }))
 
 if (images.length === 0) {
-  console.error("no images in ./cache - run `bun run fetch` first")
+  console.error(
+    `no images in ${SOURCE_DIR} - run \`bun run fetch\` for the sample set, ` +
+      "or pass a directory: `bun src/index.ts ~/Pictures`",
+  )
   process.exit(1)
 }
 

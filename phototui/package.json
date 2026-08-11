@@ -12,6 +12,7 @@
     "start": "bun src/index.ts",
     "dev": "bun --watch src/index.ts",
     "fetch": "bun scripts/fetch.ts",
+    "scale": "bun scripts/scale.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
