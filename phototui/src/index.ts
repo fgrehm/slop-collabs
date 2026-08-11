@@ -255,6 +255,8 @@ function cellPixelSize(col: number): [number, number] {
 interface LiveCell {
   box: BoxRenderable
   image: ImageRenderable
+  spinner: TextRenderable | null
+  loading: boolean
   handle: DecodeHandle | null
 }
 const cells = new Map<number, LiveCell>()
@@ -266,6 +268,8 @@ const decodePool = new DecodePool(Math.min(8, Math.max(2, availableParallelism()
 
 function applyDecoded(cell: LiveCell, img: { rgba: Uint8Array; width: number; height: number; stride: number } | null) {
   if (cell.image.isDestroyed) return
+  cell.loading = false
+  if (cell.spinner) cell.spinner.visible = false
   if (!img) return
   // Inject the off-thread-decoded pixels as a NativeImage without going
   // through `source` (which would re-decode on the main thread).
@@ -299,8 +303,19 @@ function createCell(i: number): LiveCell {
     protocol: "auto",
   })
   box.add(image)
+  // Per-cell loading spinner: visible while the decode is pending (real
+  // albums decode off-thread on first pass, so cells pop in asynchronously).
+  const spinner = new TextRenderable(renderer, {
+    id: `spinner-${i}`,
+    content: "⠋",
+    position: "absolute",
+    left: Math.max(0, Math.floor((colWidths[col]! - 1) / 2)),
+    top: Math.max(0, Math.floor((cellH - 1) / 2)),
+    selectable: false,
+  })
+  box.add(spinner)
   contentBox!.add(box)
-  const cell: LiveCell = { box, image, handle: null }
+  const cell: LiveCell = { box, image, spinner, loading: true, handle: null }
   // Downscale in the worker to the cell's pixel size so the main thread
   // uploads a tiny image and the terminal receives far fewer bytes per cell
   // (the stdout write is the real frame-time cost, not the render pass).
@@ -460,6 +475,19 @@ renderer.on("resize", () => {
 // every rendered frame so the rate can be measured outside the overlay.
 let frameLogging = false
 let lastFrame = 0
+
+// Animate the per-cell loading spinners. Only touches cells still loading,
+// and only a few times per second, so it stays cheap.
+const SPINNER_CHARS = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+let spinnerTick = 0
+setInterval(() => {
+  spinnerTick++
+  const ch = SPINNER_CHARS[spinnerTick % SPINNER_CHARS.length]!
+  for (const cell of cells.values()) {
+    if (cell.loading && cell.spinner) cell.spinner.content = ch
+  }
+}, 100)
+
 renderer.on("frame", () => {
   if (frameLogging) {
     const now = performance.now()
