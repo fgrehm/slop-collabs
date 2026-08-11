@@ -46,6 +46,15 @@ const renderer = await createCliRenderer({
   consoleOptions: { position: ConsolePosition.BOTTOM },
 })
 
+// Cell aspect ratio (cell height / cell width in pixels) so we can convert a
+// desired pixel cell shape into the right number of terminal rows. Defaults
+// to 2 (the OpenTUI default) when the terminal doesn't report pixel geometry.
+function cellAspectRatio() {
+  const res = renderer.resolution
+  if (!res || renderer.width <= 0 || renderer.height <= 0) return 2
+  return (res.height / renderer.height) / (res.width / renderer.width)
+}
+
 let cols = 1
 let selected = 0
 
@@ -170,7 +179,11 @@ function cellWidth(col: number) {
 }
 
 function cellHeight() {
-  return Math.max(1, Math.round(baseCellWidth() / CELL_ASPECT))
+  // CELL_ASPECT is the desired cell shape in *pixels* (width : height). Because
+  // terminal cells are taller than they are wide, we divide by cellAspectRatio
+  // so a landscape cell stays landscape in pixels and landscape photos
+  // aren't cropped into portrait.
+  return Math.max(1, Math.round(baseCellWidth() / (CELL_ASPECT * cellAspectRatio())))
 }
 
 function highlight() {
@@ -305,7 +318,8 @@ renderer.keyInput.on("keypress", (key) => {
       move(0, 1)
       highlight()
       break
-    case "enter":
+    case "return":
+    case "kpenter":
     case "o":
     case "space":
       openViewer()
