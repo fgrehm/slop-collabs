@@ -275,6 +275,18 @@ renderer.on("resize", () => {
   rebuildGrid()
 })
 
+// Per-frame logging (toggle with f). Writes a timestamped line to stderr on
+// every rendered frame so the rate can be measured outside the overlay.
+let frameLogging = false
+let lastFrame = 0
+renderer.on("frame", () => {
+  if (!frameLogging) return
+  const now = performance.now()
+  const delta = lastFrame ? now - lastFrame : 0
+  lastFrame = now
+  process.stderr.write(`frame t=${now.toFixed(1)}ms dt=${delta.toFixed(1)}ms\n`)
+})
+
 renderer.keyInput.on("keypress", (key) => {
   if (viewerOpen) {
     switch (key.name) {
@@ -323,6 +335,17 @@ renderer.keyInput.on("keypress", (key) => {
     case "o":
     case "space":
       openViewer()
+      break
+    case "d":
+      // Toggle OpenTUI's built-in overlay: live FPS + memory.
+      renderer.toggleDebugOverlay()
+      break
+    case "f":
+      // Toggle per-frame timestamps to stderr so you can measure frame rate
+      // outside the overlay (e.g. `bun src/index.ts 2>frames.log`).
+      frameLogging = !frameLogging
+      header.content =
+        `phototui - ${images.length} photos - frame log ${frameLogging ? "ON" : "OFF"} - d overlay, q to quit`
       break
     case "q":
     case "escape":

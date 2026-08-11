@@ -32,6 +32,7 @@ bun run start   # launch the TUI
 - `src/index.ts` boots the OpenTUI renderer and draws the UI.
 - `scripts/fetch.ts` downloads a hardcoded list of Unsplash image URLs into `./cache/` so nothing is committed to source control. The viewer reads images from disk.
 - Images render through OpenTUI's `ImageRenderable`, which negotiates the best image protocol the terminal supports.
+- Keys: arrows/hjkl move, enter/o/space opens a photo, escape/q returns or quits, `d` toggles the OpenTUI debug overlay (FPS + memory), `f` toggles per-frame logging to stderr (measure with `bun src/index.ts 2>frames.log`).
 
 ## Layout / decisions
 
