@@ -18,9 +18,9 @@ Rationale: keeps the MVP zero-setup, and keeps binaries/images out of the repo. 
 
 ## Layout model
 
-OpenTUI uses a flexbox-style layout. The photo grid is a masonry layout: `cols = width / 16`, each column is a vertical `BoxRenderable` stack, and every image goes into the currently shortest column so the wall stays balanced. Each cell's height is derived from the image's pixel aspect (`imageInfo`) and the terminal's cell aspect ratio (`renderer.resolution`), so portrait and landscape photos keep their shape instead of being cover-cropped into uniform cells.
+OpenTUI uses a flexbox-style layout. The grid is a uniform grid: `cols = width / 16`, and every cell is the same size (a 3:2 cell, `width / CELL_ASPECT` rows tall). Images are `cover`-cropped to fill their cell, so portrait and landscape photos all present at a consistent size. The full-screen viewer uses `fit: "fit"` to letterbox instead, so the whole photo is visible there.
 
-`cellAspectRatio` is `cellHeight / cellWidth` in pixels (OpenTUI defaults to 2 when the terminal reports no pixel geometry); height-in-rows for width `w` is `round(w * (imgH / imgW) / cellAspectRatio)`.
+Each row is a `BoxRenderable` with `flexDirection: "row"`; the grid itself is a `ScrollBoxRenderable`. We tried aspect-preserving masonry (per-image heights from `imageInfo` x `renderer.resolution`) but reverted it in favour of a clean uniform grid.
 
 ## Open questions
 
