@@ -237,6 +237,17 @@ function cellTop(i: number) {
   return rowOf(i) * (cellH + GAP)
 }
 
+// Pixel size of a cell (col c, cellH rows) so the worker can downscale the
+// decoded image to exactly what the terminal will draw. Returns [0, 0] when
+// the terminal reports no pixel geometry (no downscale then).
+function cellPixelSize(col: number): [number, number] {
+  const res = renderer.resolution
+  if (!res || renderer.width <= 0 || renderer.height <= 0) return [0, 0]
+  const pxPerCol = res.width / renderer.width
+  const pxPerRow = res.height / renderer.height
+  return [Math.max(1, Math.round(colWidths[col]! * pxPerCol)), Math.max(1, Math.round(cellH * pxPerRow))]
+}
+
 // --- Virtualization ------------------------------------------------------
 
 // Only cells within the visible window (plus a buffer) are alive; the rest
@@ -249,8 +260,6 @@ interface LiveCell {
 const cells = new Map<number, LiveCell>()
 let contentBox: BoxRenderable | null = null
 
-// Decode workers so image decoding runs off the main/render thread. Sized to
-// the available cores, capped so we don't spawn dozens for tiny galleries.
 // Decode workers so image decoding runs off the main/render thread. Sized to
 // the available cores, capped so we don't spawn dozens for tiny galleries.
 const decodePool = new DecodePool(Math.min(8, Math.max(2, availableParallelism())))
@@ -291,7 +300,11 @@ function createCell(i: number): LiveCell {
   })
   box.add(image)
   contentBox!.add(box)
-  const handle = decodePool.decode(source, (decoded: { rgba: Uint8Array; width: number; height: number; stride: number } | null) => {
+  // Downscale in the worker to the cell's pixel size so the main thread
+  // uploads a tiny image and the terminal receives far fewer bytes per cell
+  // (the stdout write is the real frame-time cost, not the render pass).
+  const [tw, th] = cellPixelSize(col)
+  const handle = decodePool.decode(source, tw, th, (decoded: { rgba: Uint8Array; width: number; height: number; stride: number } | null) => {
     if (decoded === null) console.error(`failed to load ${file}`)
     applyDecoded(cell, decoded)
   })

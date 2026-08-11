@@ -10,6 +10,8 @@ import { readFileSync } from "node:fs"
 interface DecodeRequest {
   id: number
   path: string
+  targetW: number // 0 = no downscale, send full-resolution RGBA
+  targetH: number
 }
 
 interface DecodeResult {
@@ -25,7 +27,18 @@ interface DecodeResult {
 parentPort?.on("message", (req: DecodeRequest) => {
   try {
     const bytes = readFileSync(req.path)
-    const img = NativeImage.decode(bytes)
+    let img = NativeImage.decode(bytes)
+    // Downscale to cover the target cell pixels so the main thread uploads a
+    // tiny image instead of the full-resolution one - this is what keeps the
+    // stdout write small (the render path sends far fewer bytes per cell).
+    if (req.targetW > 0 && req.targetH > 0) {
+      const scale = Math.max(req.targetW / img.width, req.targetH / img.height)
+      const w = Math.max(1, Math.round(img.width * scale))
+      const h = Math.max(1, Math.round(img.height * scale))
+      const resized = img.resize({ width: w, height: h })
+      img.dispose()
+      img = resized
+    }
     const { data, width, height, stride } = img.raw()
     // Transfer the underlying ArrayBuffer so the pixels cross the thread
     // boundary without a copy.

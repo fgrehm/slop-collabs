@@ -42,11 +42,33 @@ Key points:
 
 Measured at startup with 46 photos, an 80-col terminal: 20 cells alive (5 cols, cellH 8, totalHeight 89). Scroll keeps the live count bounded to roughly viewport + 2*buffer.
 
+## Performance: where the time actually goes
+
+Measured with `renderer.getStats()` (`gatherStats: true` in the renderer config) in a real Ghostty terminal, bound to `b`:
+
+- **The bottleneck is the stdout write, not decode and not the render pass.** `nativeRenderTime` is ~0ms; `nativeStdoutWriteTime` is the whole frame (~33ms at 30fps). `cellsUpdated` spikes to 1000-2600 whenever the visible window changes (scroll/selection/resize). The frame budget is 33ms, so stdout at ~33ms pins you at 30fps and drops below 20 under image-heavy load.
+- **`cellsUpdated` spikes come from newly-visible cells being fully drawn** (scrolling creates new cells that must be painted), not from selection moves: the Box `border`/`borderColor` setters bail early when the value is unchanged, so moving selection only dirties the two cells whose border actually changed.
+- **Decode off the main thread keeps the loop responsive but does not fix the stdout cost.** The render pass and the stdout write are still on the main thread and cannot be moved.
+- **The fix: downscale thumbnails to the cell's pixel size in the worker.** The worker calls `NativeImage.resize` to cover the cell's pixel dims (computed from `renderer.resolution`), so `fromRgba` uploads a tiny image and the terminal receives far fewer bytes per cell. Measured: 50 images full-res = ~75MiB of RGBA vs 242KiB downscaled to 30x30 (~300x fewer bytes).
+
+## Decoding off the main thread (worker pool)
+
+OpenTUI's `imageDecode` is a synchronous native (Zig) FFI that blocks the main thread; `NativeImage.load` only awaits the file read, not the decode. We offload decoding to a pool of `node:worker_threads` workers:
+
+- Each worker reads the file, decodes to RGBA, optionally downscales, and transfers the buffer back zero-copy (transfer list).
+- The main thread builds a `NativeImage` via `fromRgba` and injects it into the renderable's private `_image` field (bypassing `set source`, which would re-decode on the main thread), then calls `requestRender()`.
+- In-flight decodes are cancelled when their cell scrolls away before the result returns.
+- A Bun worker can load `@opentui/core`; each worker gets its own instance of the native lib (verified).
+- Pool sized `min(8, max(2, availableParallelism()))`.
+- **Honest tradeoff:** for small images the pool is slower in wall-clock than main-thread decode (worker message overhead), but the win is responsiveness: the main/render thread never blocks. Verified the frame loop holds a steady ~33ms during decoding with a 2046-image gallery.
+
 ## Gotchas learned
 
 - OpenTUI names the Enter key `return` (keypad `kpenter`), not `enter`. A handler matching `key.name === "enter"` never fires; only `o` worked until we fixed it.
 - `console.log`/`console.error` are captured by OpenTUI's console overlay, not written to stderr, unless `OTUI_USE_CONSOLE=false`. For diagnostics that must reach a file/pipe, use `process.stderr.write` directly (and set `OTUI_USE_CONSOLE=false` when running headless tests), or toggle the overlay with `renderer.console.show()`.
-- The built-in debug overlay (`renderer.toggleDebugOverlay()`, bound to `d`) shows live FPS + memory; `f` toggles per-frame `dt` logging to stderr for measuring outside the overlay (`bun src/index.ts 2>frames.log`).
+- The built-in debug overlay (`renderer.toggleDebugOverlay()`, bound to `d`) shows live FPS + memory; `f` toggles per-frame `dt` logging to stderr for measuring outside the overlay (`bun src/index.ts 2>frames.log`); `b` dumps a one-shot render-stats breakdown (render vs stdout-write time, cellsUpdated) to stderr.
+- `renderer.getStats()` returns real numbers only when `gatherStats: true` is set in the renderer config.
+- Cross-file `.ts` imports under Bun + `moduleResolution: NodeNext` need `allowImportingTsExtensions: true` in tsconfig.
 
 ## Open questions
 

@@ -51,11 +51,11 @@ export class DecodePool {
     }
   }
 
-  decode(path: string, onDone: (img: DecodedImage | null) => void): DecodeHandle {
+  decode(path: string, targetW: number, targetH: number, onDone: (img: DecodedImage | null) => void): DecodeHandle {
     const id = this.counter++
     this.pending.set(id, onDone)
     const worker = this.workers[id % this.workers.length]!
-    worker.postMessage({ id, path })
+    worker.postMessage({ id, path, targetW, targetH })
     return {
       cancel: () => {
         // The worker still runs to completion; we just drop the result.
