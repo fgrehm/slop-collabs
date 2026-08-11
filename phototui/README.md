@@ -47,7 +47,7 @@ bun run start                    # then watch the `d` overlay while scrolling
 - `scripts/fetch.ts` downloads a hardcoded list of Unsplash image URLs into `./cache/` so nothing is committed to source control. The viewer reads images from disk.
 - Images render through OpenTUI's `ImageRenderable`, which negotiates the best image protocol the terminal supports.
 - The grid is **virtualized**: only cells in the visible window (plus a small buffer) are kept alive, and decoded images are freed when their cell scrolls away, so a large gallery stays bounded in memory.
-- Keys: arrows/hjkl move, enter/o/space opens a photo, escape/q returns or quits, `d` toggles the OpenTUI debug overlay (FPS + memory), `f` toggles per-frame logging to stderr (measure with `bun src/index.ts 2>frames.log`).
+- Keys: arrows/hjkl move, enter/o/space opens a photo, escape/q returns or quits, `d` toggles the OpenTUI debug overlay (FPS + memory), `f` toggles per-frame logging to stderr (measure with `bun src/index.ts 2>frames.log`), `b` dumps a one-shot render-stats breakdown (render vs stdout-write time) to stderr.
 
 ## Layout / decisions
 

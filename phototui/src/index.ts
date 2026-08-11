@@ -74,6 +74,7 @@ const PREFETCH_ROWS = 4 // extra rows prefetched ahead once the selection nears 
 const renderer = await createCliRenderer({
   exitOnCtrlC: false,
   targetFps: 30,
+  gatherStats: true,
   consoleOptions: { position: ConsolePosition.BOTTOM },
 })
 
@@ -181,6 +182,17 @@ function closeViewer() {
 
 function updateHeader() {
   header.content = `phototui - ${images.length} photos - arrows to move, enter to open, q to quit`
+}
+
+function dumpStats() {
+  const s = renderer.getStats()
+  process.stderr.write(
+    `stats live=${cells.size} lastFrame=${s.nativeLastFrameTime.toFixed(2)}ms ` +
+      `avgFrame=${s.nativeAverageFrameTime.toFixed(2)}ms ` +
+      `render=${(s.nativeRenderTime ?? 0).toFixed(2)}ms ` +
+      `stdout=${(s.nativeStdoutWriteTime ?? 0).toFixed(2)}ms ` +
+      `cells=${s.cellsUpdated} avgCells=${s.averageCellsUpdated} frames=${s.nativeFrameCount}\n`,
+  )
 }
 
 // --- Grid geometry -------------------------------------------------------
@@ -503,6 +515,11 @@ renderer.keyInput.on("keypress", (key) => {
       frameLogging = !frameLogging
       header.content =
         `phototui - ${images.length} photos - frame log ${frameLogging ? "ON" : "OFF"} - d overlay, q to quit`
+      break
+    case "b":
+      // Dump a one-shot render-stats breakdown to stderr so we can tell
+      // whether a frame drop is the render pass or the stdout write.
+      dumpStats()
       break
     case "q":
     case "escape":
