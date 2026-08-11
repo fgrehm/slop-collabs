@@ -68,8 +68,8 @@ if (images.length === 0) {
 const GAP = 1
 const COL_MIN_WIDTH = 16
 const CELL_ASPECT = 1 // cell width : height in pixels; square cells, cover-cropped
-const BUFFER_ROWS = 3 // rows kept alive above/below the viewport for smooth scrolling
-const PREFETCH_ROWS = 4 // extra rows prefetched ahead once the selection nears an edge
+const BUFFER_ROWS = 3 // minimum rows kept alive above/below the viewport (scales with terminal height)
+const PREFETCH_ROWS = 4 // minimum extra rows prefetched once the selection nears an edge (scales with terminal height)
 
 const renderer = await createCliRenderer({
   exitOnCtrlC: false,
@@ -324,8 +324,14 @@ function visibleRange() {
   const top = grid.scrollTop
   const viewH = grid.viewport.height
   const stride = cellH + GAP
-  let firstRow = Math.max(0, Math.floor((top - BUFFER_ROWS * stride) / stride))
-  let lastRow = Math.ceil((top + viewH + BUFFER_ROWS * stride) / stride)
+  // The buffer and prefetch scale with the terminal: how many image-rows are
+  // visible depends on the viewport height, so a fixed row count would be
+  // proportionally tiny on a tall terminal (and waste memory on a short one).
+  const visibleRows = viewH > 0 ? Math.max(1, Math.ceil(viewH / stride)) : 1
+  const buffer = Math.max(BUFFER_ROWS, visibleRows)
+  const prefetch = Math.max(PREFETCH_ROWS, visibleRows)
+  let firstRow = Math.max(0, Math.floor((top - buffer * stride) / stride))
+  let lastRow = Math.ceil((top + viewH + buffer * stride) / stride)
 
   // Prefetch ahead of the selection: once the selected row nears the
   // visible bottom (or top), extend the live window a few rows further in
@@ -338,8 +344,8 @@ function visibleRange() {
     // Extend ahead of the selection only when it sits on (or past) the
     // visible edge: last visible row -> prefetch below, first visible row
     // -> prefetch above.
-    if (selRow >= bottomRow - 1) lastRow += PREFETCH_ROWS
-    if (selRow <= topRow + 1) firstRow = Math.max(0, firstRow - PREFETCH_ROWS)
+    if (selRow >= bottomRow - 1) lastRow += prefetch
+    if (selRow <= topRow + 1) firstRow = Math.max(0, firstRow - prefetch)
   }
 
   const first = firstRow * cols
