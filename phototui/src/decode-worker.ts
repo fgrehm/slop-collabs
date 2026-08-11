@@ -19,8 +19,9 @@ const THUMB_SIZE = 256 // long edge, pixels
 const THUMB_HEADER = "PTRGBA" // magic + u32 width + u32 height + u32 stride
 
 function thumbDir(): string {
-  const base = process.env.XDG_CACHE_HOME || join(process.env.HOME || ".", ".cache")
-  return join(base, "phototui", "thumbs")
+  // /tmp for now: this is a POC, not production-ready. A real cache would
+  // live under XDG_CACHE_HOME and be invalidated when the source changes.
+  return join("/tmp", "phototui-thumbs")
 }
 
 function thumbPath(path: string): string {
