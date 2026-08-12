@@ -72,7 +72,7 @@ const PREFETCH_ROWS = 4 // minimum extra rows prefetched once the selection near
 
 const renderer = await createCliRenderer({
   exitOnCtrlC: false,
-  targetFps: 30,
+  targetFps: 60,
   gatherStats: true,
   consoleOptions: { position: ConsolePosition.BOTTOM },
 })
@@ -532,6 +532,11 @@ renderer.on("resize", () => {
 // every rendered frame so the rate can be measured outside the overlay.
 let frameLogging = false
 let lastFrame = 0
+
+// Allow headless frame-rate measurement: OTUI_FRAME_LOG=1 starts with frame
+// logging on, so `bun src/index.ts` can be piped to a file and the inter-frame
+// deltas measured without pressing `f`.
+if (process.env.OTUI_FRAME_LOG === "1") frameLogging = true
 
 // Animate the per-cell loading spinners. Only touches cells still loading,
 // and only a few times per second, so it stays cheap.
