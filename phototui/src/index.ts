@@ -251,11 +251,19 @@ function cellPixelSize(col: number): [number, number] {
 
 // Only cells within the visible window (plus a buffer) are alive; the rest
 // are destroyed so their decoded images are freed.
+interface DecodedPixels {
+  rgba: Uint8Array
+  width: number
+  height: number
+  stride: number
+}
 interface LiveCell {
   box: BoxRenderable
   image: ImageRenderable
   spinner: TextRenderable | null
   loading: boolean
+  visible: boolean
+  pendingPixels: DecodedPixels | null
   handle: DecodeHandle | null
 }
 const cells = new Map<number, LiveCell>()
@@ -274,18 +282,7 @@ const decodePool = new DecodePool(Math.min(8, Math.max(2, availableParallelism()
 const MAX_APPLY_PER_FRAME = 6
 const pendingApplies: Array<() => void> = []
 
-function applyDecoded(cell: LiveCell, img: { rgba: Uint8Array; width: number; height: number; stride: number } | null) {
-  if (cell.image.isDestroyed) return
-  if (!img) {
-    // Decode failed: drop the spinner, leave the cell empty.
-    cell.loading = false
-    if (cell.spinner) cell.spinner.visible = false
-    return
-  }
-  // Inject the off-thread-decoded pixels as a NativeImage without going
-  // through `source` (which would re-decode on the main thread). Queued so a
-  // burst of completions drains across frames instead of spiking one stdout
-  // write. The spinner stays until the image is actually applied.
+function queueApply(cell: LiveCell, img: DecodedPixels) {
   const image = cell.image
   const spinner = cell.spinner
   pendingApplies.push(() => {
@@ -299,6 +296,27 @@ function applyDecoded(cell: LiveCell, img: { rgba: Uint8Array; width: number; he
   // Wake the render loop so the frame listener drains the queue. OpenTUI
   // coalesces multiple requestRender() calls in one tick into a single frame.
   renderer.requestRender()
+}
+
+function applyDecoded(cell: LiveCell, img: DecodedPixels | null) {
+  if (cell.image.isDestroyed) return
+  if (!img) {
+    // Decode failed: drop the spinner, leave the cell empty.
+    cell.loading = false
+    if (cell.spinner) cell.spinner.visible = false
+    return
+  }
+  // Only upload images for cells actually on screen. Prefetched (off-screen)
+  // cells just hold their decoded pixels; they get uploaded when they scroll
+  // into view. This keeps the terminal from receiving image bytes for cells
+  // the user can't see yet - the stdout write is the real frame-time cost.
+  if (!cell.visible) {
+    cell.pendingPixels = img
+    cell.loading = false
+    if (cell.spinner) cell.spinner.visible = false
+    return
+  }
+  queueApply(cell, img)
 }
 
 function createCell(i: number): LiveCell {
@@ -338,7 +356,7 @@ function createCell(i: number): LiveCell {
   })
   box.add(spinner)
   contentBox!.add(box)
-  const cell: LiveCell = { box, image, spinner, loading: true, handle: null }
+  const cell: LiveCell = { box, image, spinner, loading: true, visible: false, pendingPixels: null, handle: null }
   // Downscale in the worker to the cell's pixel size so the main thread
   // uploads a tiny image and the terminal receives far fewer bytes per cell
   // (the stdout write is the real frame-time cost, not the render pass).
@@ -405,9 +423,24 @@ let lastScrollTop = -1
 let lastWidth = -1
 let lastHeight = -1
 
+// The cell index range actually within the viewport (not the prefetch
+// window). Only these cells upload images to the terminal; prefetched cells
+// hold their decoded pixels until they scroll into view.
+function visibleCellRange(): [number, number] {
+  const top = grid.scrollTop
+  const viewH = grid.viewport.height
+  const stride = cellH + GAP
+  const firstRow = Math.max(0, Math.floor(top / stride))
+  const lastRow = Math.max(firstRow, Math.ceil((top + viewH) / stride) - 1)
+  const first = firstRow * cols
+  const last = Math.min(images.length, lastRow * cols + cols) - 1
+  return [Math.max(0, first), Math.max(0, last)]
+}
+
 function reconcile() {
   if (!contentBox) return
   const [first, last] = visibleRange()
+  const [visFirst, visLast] = visibleCellRange()
 
   // Destroy cells that have left the window.
   for (const i of [...cells.keys()]) {
@@ -416,6 +449,17 @@ function reconcile() {
   // Create cells that have entered the window.
   for (let i = first; i <= last; i++) {
     if (!cells.has(i)) cells.set(i, createCell(i))
+  }
+  // Update visibility flags and upload any cell that just scrolled into view
+  // and already has decoded pixels waiting.
+  for (const [i, cell] of cells) {
+    const vis = i >= visFirst && i <= visLast
+    if (vis && !cell.visible && cell.pendingPixels) {
+      const px = cell.pendingPixels
+      cell.pendingPixels = null
+      queueApply(cell, px)
+    }
+    cell.visible = vis
   }
 }
 
