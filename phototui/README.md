@@ -23,7 +23,7 @@ Working POC. Uniform responsive grid with keyboard selection, full-screen viewer
 
 ```sh
 bun install
-bun run fetch   # download the sample Unsplash photos into ./cache (gitignored)
+bun run fetch   # download the sample Pexels photos into ./cache (gitignored)
 bun run start   # launch the TUI against the sample cache
 ```
 
@@ -44,7 +44,7 @@ bun run start                    # then watch the `d` overlay while scrolling
 ## How it works
 
 - `src/index.ts` boots the OpenTUI renderer and draws the UI.
-- `scripts/fetch.ts` downloads a hardcoded list of Unsplash image URLs into `./cache/` so nothing is committed to source control. The viewer reads images from disk.
+- `scripts/fetch.ts` downloads a curated set of **Pexels** photos into `./cache/` so nothing is committed to source control. Pexels photos are free for personal and commercial use, with attribution appreciated but not required (see the [Pexels License](https://www.pexels.com/license/)); the CDN serves images by ID directly, no API key. The viewer reads images from disk.
 - Images render through OpenTUI's `ImageRenderable`, which negotiates the best image protocol the terminal supports.
 - The grid is **virtualized**: only cells in the visible window (plus a prefetch buffer) are kept alive, and decoded images are freed when their cell scrolls away, so a large gallery stays bounded in memory.
 - The prefetch buffer **scales with terminal height** (a full page below the fold, half a page above), so scrolling down never waits on a decode.

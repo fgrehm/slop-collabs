@@ -12,9 +12,11 @@ OpenTUI version pinned to `0.5.1` (same as xtui).
 
 ## Image source strategy
 
-"Grab a bunch of Unsplash photos" is done with hardcoded `images.unsplash.com` URLs (no API key), downloaded to a local `./cache/` directory that is gitignored. The viewer reads from disk only.
+"Grab a bunch of stock photos" is done with hardcoded CDN URLs (no API key), downloaded to a local `./cache/` directory that is gitignored. The viewer reads from disk only.
 
-Rationale: keeps the MVP zero-setup, and keeps binaries/images out of the repo. Swapping in a local photo folder or a real Unsplash API client later is trivial because the viewer only ever sees a directory of image files.
+Rationale: keeps the MVP zero-setup, and keeps binaries/images out of the repo. Swapping in a local photo folder or a real API client later is trivial because the viewer only ever sees a directory of image files.
+
+Source is **Pexels** (not Unsplash). Pexels photos are free for personal and commercial use, attribution appreciated but not required ([Pexels License](https://www.pexels.com/license/)), and the CDN (`images.pexels.com/photos/{id}/pexels-photo-{id}.jpeg`) serves by ID directly with no key and supports server-side downscaling via `?w=`. The 48-item curated list (a balanced mix of portraits, wildlife, cities, architecture, abstract, food, travel, landscape, ocean, forest) was discovered by scraping the public search pages' `__NEXT_DATA__` JSON, verifying each ID with a HEAD request, and hardcoding the winners into `scripts/fetch.ts`. The scraping was a one-off build tool and was removed; the list is static.
 
 ## Terminal / multiplexer reality
 
