@@ -265,16 +265,40 @@ let contentBox: BoxRenderable | null = null
 // the available cores, capped so we don't spawn dozens for tiny galleries.
 const decodePool = new DecodePool(Math.min(8, Math.max(2, availableParallelism())))
 
+// When a fresh page of cells is created (scroll, rebuild), their decodes all
+// complete around the same time. Applying every one in a single frame makes
+// the terminal receive a burst of image uploads in one stdout write, which is
+// the real frame-time cost. So completed decodes are queued and drained at a
+// bounded rate (MAX_APPLY_PER_FRAME per frame) to smooth the load across
+// frames instead of spiking one. Cells not yet applied keep their spinner.
+const MAX_APPLY_PER_FRAME = 6
+const pendingApplies: Array<() => void> = []
+
 function applyDecoded(cell: LiveCell, img: { rgba: Uint8Array; width: number; height: number; stride: number } | null) {
   if (cell.image.isDestroyed) return
-  cell.loading = false
-  if (cell.spinner) cell.spinner.visible = false
-  if (!img) return
+  if (!img) {
+    // Decode failed: drop the spinner, leave the cell empty.
+    cell.loading = false
+    if (cell.spinner) cell.spinner.visible = false
+    return
+  }
   // Inject the off-thread-decoded pixels as a NativeImage without going
-  // through `source` (which would re-decode on the main thread).
-  ;(cell.image as unknown as { _image: NativeImage | null })._image =
-    NativeImage.fromRgba(img.rgba, img.width, img.height, img.stride)
-  ;(cell.image as unknown as { requestRender: () => void }).requestRender()
+  // through `source` (which would re-decode on the main thread). Queued so a
+  // burst of completions drains across frames instead of spiking one stdout
+  // write. The spinner stays until the image is actually applied.
+  const image = cell.image
+  const spinner = cell.spinner
+  pendingApplies.push(() => {
+    if (image.isDestroyed) return
+    ;(image as unknown as { _image: NativeImage | null })._image =
+      NativeImage.fromRgba(img.rgba, img.width, img.height, img.stride)
+    ;(image as unknown as { requestRender: () => void }).requestRender()
+    if (spinner) spinner.visible = false
+    cell.loading = false
+  })
+  // Wake the render loop so the frame listener drains the queue. OpenTUI
+  // coalesces multiple requestRender() calls in one tick into a single frame.
+  renderer.requestRender()
 }
 
 function createCell(i: number): LiveCell {
@@ -477,6 +501,11 @@ renderer.on("resize", () => {
 let frameLogging = false
 let lastFrame = 0
 
+// Allow headless frame-rate measurement: OTUI_FRAME_LOG=1 starts with frame
+// logging on, so `bun src/index.ts` can be piped to a file and the inter-frame
+// deltas measured without pressing `f`.
+if (process.env.OTUI_FRAME_LOG === "1") frameLogging = true
+
 // Animate the per-cell loading spinners. Only touches cells still loading,
 // and only a few times per second, so it stays cheap.
 const SPINNER_CHARS = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -495,6 +524,13 @@ renderer.on("frame", () => {
     const delta = lastFrame ? now - lastFrame : 0
     lastFrame = now
     process.stderr.write(`frame t=${now.toFixed(1)}ms dt=${delta.toFixed(1)}ms\n`)
+  }
+
+  // Smoothly apply completed decodes: at most MAX_APPLY_PER_FRAME per frame
+  // so a burst of completed decodes doesn't spike a single stdout write.
+  if (pendingApplies.length > 0) {
+    const batch = pendingApplies.splice(0, MAX_APPLY_PER_FRAME)
+    for (const apply of batch) apply()
   }
 
   // Reconcile the virtualized grid when the scroll position or terminal
