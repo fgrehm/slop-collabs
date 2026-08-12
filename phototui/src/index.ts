@@ -73,6 +73,7 @@ const PREFETCH_ROWS = 4 // minimum extra rows prefetched once the selection near
 const renderer = await createCliRenderer({
   exitOnCtrlC: false,
   targetFps: 60,
+
   gatherStats: true,
   consoleOptions: { position: ConsolePosition.BOTTOM },
 })
