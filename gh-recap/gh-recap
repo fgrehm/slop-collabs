@@ -1,0 +1,382 @@
+#!/usr/bin/env bash
+# gh-recap: emit an LLM prompt summarizing your recent GitHub activity across repos,
+# with others' activity as compact context. Pipe the output to any LLM for a refresher.
+#
+# Usage:
+#   gh-recap <owner/repo>... [--me <handle>] [--last-day|--last-week|--since <ISO8601>]
+#           [--no-cache] [--cache-dir DIR]
+#
+# Examples:
+#   gh-recap cli/cli                                     # yesterday by default, auto-detects you
+#   gh-recap org/web org/api org/infra --last-week       # last week, multiple repos
+#   gh-recap cli/cli --me alice --since 2026-05-14T00:00:00Z
+#   gh-recap org/repo --no-cache | claude
+#
+# Requires: gh (authenticated), jq.
+
+set -euo pipefail
+
+# ---------- defaults ----------
+ME=""
+SINCE=""
+WINDOW=""
+NO_CACHE=0
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/gh-recap"
+REPOS=()
+
+usage() {
+  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+  exit "${1:-0}"
+}
+
+need_val() {
+  [[ $# -ge 2 ]] || { echo "error: $1 needs a value" >&2; exit 1; }
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --me)        need_val "$@"; ME="$2"; shift 2 ;;
+    --since)     need_val "$@"; WINDOW="since"; SINCE="$2"; shift 2 ;;
+    --last-day)  WINDOW="day"; shift ;;
+    --last-week) WINDOW="week"; shift ;;
+    --no-cache)  NO_CACHE=1; shift ;;
+    --cache-dir) need_val "$@"; CACHE_DIR="$2"; shift 2 ;;
+    -h|--help)   usage 0 ;;
+    -*)          echo "unknown flag: $1" >&2; usage 1 ;;
+    *)           REPOS+=("$1"); shift ;;
+  esac
+done
+
+[[ ${#REPOS[@]} -eq 0 ]] && { echo "error: missing <owner/repo> (one or more)" >&2; usage 1; }
+for r in "${REPOS[@]}"; do
+  [[ "$r" == */* ]] || { echo "error: repo must be owner/name, got: $r" >&2; exit 1; }
+done
+
+# ---------- window ----------
+# Default: last day. Date math done in jq (now/todateiso8601) so we have no
+# dependency on GNU date or coreutils gdate.
+#
+# We snap to UTC day boundaries (not a rolling 24h/7d window) for two reasons:
+#   1. Cache key = sha256(repo + since). A rolling now-based timestamp would
+#      drift second-by-second, so the cache would never hit. Snapping to the
+#      start of a UTC day makes the key stable across runs in the same day.
+#   2. "Yesterday -> now" colloquially means "since the start of yesterday",
+#      not "since exactly 24h ago". Same for "last week".
+# `now % 86400` is seconds since UTC midnight; subtracting it gives unix
+# midnight UTC of today. `--last-day` then backs up one day, `--last-week`
+# backs up seven.
+case "$WINDOW" in
+  day)   SINCE=$(jq -nr 'now - (now % 86400) - 86400  | todateiso8601') ;;
+  week)  SINCE=$(jq -nr 'now - (now % 86400) - 604800 | todateiso8601') ;;
+  since)
+    # Reject non-UTC offsets: window filtering compares ISO strings lexicographically,
+    # which only works when --since is in UTC 'Z' form (matching the API's timestamps).
+    if ! [[ "$SINCE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]]; then
+      echo "error: --since must be ISO 8601 in UTC with 'Z' zone (e.g. 2026-05-14T00:00:00Z)" >&2
+      exit 1
+    fi
+    ;;
+  "")    WINDOW="day"; SINCE=$(jq -nr 'now - (now % 86400) - 86400  | todateiso8601') ;;
+esac
+echo "# window: $SINCE -> now" >&2
+
+mkdir -p "$CACHE_DIR"
+
+# ---------- me ----------
+# Auto-detect via gh api user; cached so we don't re-query on every run. Pass --me to override.
+if [[ -z "$ME" ]]; then
+  ME_FILE="$CACHE_DIR/.me"
+  if [[ -f "$ME_FILE" ]] && [[ $NO_CACHE -eq 0 ]]; then
+    ME=$(cat "$ME_FILE")
+  else
+    ME=$(gh api user --jq .login 2>/dev/null) || {
+      echo "error: could not auto-detect your GitHub login (gh api user failed)." >&2
+      echo "       pass --me <your-login>" >&2
+      exit 1
+    }
+    printf '%s' "$ME" > "$ME_FILE.tmp.$$" && mv "$ME_FILE.tmp.$$" "$ME_FILE"
+  fi
+fi
+echo "# resolved --me: @$ME" >&2
+
+# ---------- graphql ----------
+# Reviews/comments ordered by CREATED_AT DESC so the most-recent ones (the ones
+# likely inside the window) are guaranteed to be in the first:20 returned. The
+# default connection order is creation-ascending, which would silently drop recent
+# activity on long-lived PRs.
+GRAPHQL_QUERY='
+query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    nameWithOwner
+    pullRequests(first: 50, orderBy: {field: UPDATED_AT, direction: DESC},
+                 states: [OPEN, MERGED, CLOSED]) {
+      nodes {
+        number title url state isDraft
+        createdAt mergedAt closedAt updatedAt
+        author { login __typename }
+        body
+        additions deletions changedFiles
+        reviews(first: 20) {
+          nodes { state submittedAt author { login __typename } }
+        }
+        comments(first: 20, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          nodes { createdAt author { login __typename } }
+        }
+      }
+    }
+    issues(first: 50, orderBy: {field: UPDATED_AT, direction: DESC},
+           states: [OPEN, CLOSED]) {
+      nodes {
+        number title url state
+        createdAt closedAt updatedAt
+        author { login __typename }
+        body
+        comments(first: 20, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          nodes { createdAt author { login __typename } }
+        }
+      }
+    }
+  }
+}'
+
+# ---------- normalization (jq, per repo) ----------
+# Each repo's raw GraphQL response is reduced to {repo, prs[], issues[]}, where
+# every item carries:
+#   class     "me" | "other" | "bot"
+#   lifecycle merged | opened | closed_unmerged | touched_open | closed (issues)
+# plus a stripped/truncated body for items authored by you.
+NORMALIZE_JQ='
+def strip_md:
+  gsub("<!--[\\s\\S]*?-->"; "")
+  | gsub("```[\\s\\S]*?```"; "[code block]")
+  | gsub("<details>[\\s\\S]*?</details>"; "[details]")
+  | gsub("`(?<t>[^`]+)`"; "\(.t)")
+  | gsub("!\\[[^\\]]*\\]\\([^)]*\\)"; "[image]")
+  | gsub("\\[(?<t>[^\\]]+)\\]\\((?<u>[^)]+)\\)"; "\(.t)")
+  | gsub("(?m)^#{1,6}\\s+"; "")
+  | gsub("\\*\\*(?<t>[^*]+)\\*\\*"; "\(.t)")
+  | gsub("(?<!\\*)\\*(?<t>[^*\\n]+)\\*"; "\(.t)")
+  | gsub("(?m)^\\s*>\\s?"; "")
+  | gsub("\\r"; "")
+  | gsub("\\n{3,}"; "\n\n");
+
+def first_para_plus_bullets:
+  . as $body
+  | ($body | split("\n\n")) as $paras
+  | ($paras[0] // "")
+    + (
+        [$paras[1:][] | select(test("(?m)^\\s*[-*+]\\s"))] | .[0:1] | join("\n\n")
+        | if . == "" then "" else "\n\n" + . end
+      );
+
+def body_for(is_bot):
+  ((.body // "") | strip_md) as $b
+  | if is_bot then ""
+    elif ($b | length) == 0 then ""
+    elif ($b | length) > 2000 then ($b | first_para_plus_bullets) + "\n\n[truncated]"
+    else $b end;
+
+def is_bot:
+  (.author.__typename // "") == "Bot"
+  or ((.author.login // "") | test("\\[bot\\]$"));
+
+def author_handle:
+  (.author.login // "ghost") as $l
+  | if is_bot then
+      if ($l | test("\\[bot\\]$")) then "@\($l)" else "@\($l) [bot]" end
+    else "@\($l)" end;
+
+def class_of:
+  if is_bot then "bot"
+  elif (.author.login // "") == $me then "me"
+  else "other" end;
+
+def pr_lifecycle:
+  if .mergedAt != null and .mergedAt >= $since then "merged"
+  elif .createdAt >= $since then "opened"
+  elif .closedAt != null and .closedAt >= $since and .mergedAt == null then "closed_unmerged"
+  elif .state == "OPEN" and .createdAt < $since then "touched_open"
+  else "none" end;
+
+def issue_lifecycle:
+  if .createdAt >= $since then "opened"
+  elif .closedAt != null and .closedAt >= $since then "closed"
+  elif .state == "OPEN" and .createdAt < $since then "touched_open"
+  else "none" end;
+
+def pr_in_window:
+  [.createdAt, .mergedAt, .closedAt,
+   (.reviews.nodes[]?.submittedAt),
+   (.comments.nodes[]?.createdAt)]
+  | map(select(. != null and . >= $since))
+  | length > 0;
+
+def issue_in_window:
+  [.createdAt, .closedAt, (.comments.nodes[]?.createdAt)]
+  | map(select(. != null and . >= $since))
+  | length > 0;
+
+def review_summary:
+  (.reviews.nodes // [])
+  | group_by(.state)
+  | map("\(length) \(.[0].state | ascii_downcase)")
+  | join(", ");
+
+.data.repository as $r
+| ($r.pullRequests.nodes | map(select(pr_in_window))) as $prs
+| ($r.issues.nodes      | map(select(issue_in_window))) as $issues
+| {
+    repo: $r.nameWithOwner,
+    prs: [$prs[] | {
+      n: .number, title, url,
+      author: author_handle,
+      class: class_of,
+      lifecycle: pr_lifecycle,
+      state: .state, draft: .isDraft,
+      adds: .additions, dels: .deletions, files: .changedFiles,
+      reviews: review_summary,
+      recent_reviews: ([.reviews.nodes[]? | select(.submittedAt != null and .submittedAt >= $since)] | length),
+      recent_comments: ([.comments.nodes[]? | select(.createdAt >= $since)] | length),
+      body: body_for(is_bot),
+    }],
+    issues: [$issues[] | {
+      n: .number, title, url,
+      author: author_handle,
+      class: class_of,
+      lifecycle: issue_lifecycle,
+      state: .state,
+      recent_comments: ([.comments.nodes[]? | select(.createdAt >= $since)] | length),
+      body: body_for(is_bot),
+    }],
+  }
+'
+
+# ---------- per-repo fetch + normalize ----------
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+i=0
+for REPO in "${REPOS[@]}"; do
+  OWNER="${REPO%/*}"
+  NAME="${REPO#*/}"
+  if command -v sha256sum >/dev/null 2>&1; then
+    HASH=$(printf '%s|%s' "$REPO" "$SINCE" | sha256sum | cut -c1-16)
+  else
+    HASH=$(printf '%s|%s' "$REPO" "$SINCE" | shasum -a 256 | cut -c1-16)
+  fi
+  CACHE_FILE="$CACHE_DIR/${OWNER}__${NAME}__${HASH}.json"
+
+  if [[ -f "$CACHE_FILE" && $NO_CACHE -eq 0 ]]; then
+    echo "# (cache hit: $REPO)" >&2
+    RAW=$(cat "$CACHE_FILE")
+  else
+    echo "# fetching $REPO..." >&2
+    RAW=$(gh api graphql -F owner="$OWNER" -F name="$NAME" -f query="$GRAPHQL_QUERY") || {
+      echo "error: gh api graphql failed for $REPO" >&2
+      exit 1
+    }
+    if [[ $NO_CACHE -eq 0 ]]; then
+      # Atomic write: interrupted runs leave no corrupt cache file behind.
+      printf '%s' "$RAW" > "$CACHE_FILE.tmp.$$" && mv "$CACHE_FILE.tmp.$$" "$CACHE_FILE"
+    fi
+  fi
+
+  # Validate the response whether it came from cache or fresh fetch. Error
+  # responses (rate-limited, repo not visible, etc.) must not reach the
+  # normalizer, where they would surface as opaque "Cannot iterate over null".
+  if ERR_MSG=$(printf '%s' "$RAW" | jq -rj '.errors[0].message // empty' 2>/dev/null) && [[ -n "$ERR_MSG" ]]; then
+    echo "error: GitHub API for $REPO: $ERR_MSG" >&2
+    exit 1
+  fi
+  if ! printf '%s' "$RAW" | jq -e '.data.repository != null' >/dev/null 2>&1; then
+    echo "error: $REPO has no data.repository (not found, not visible, or a corrupt cache file)." >&2
+    echo "       delete $CACHE_FILE and rerun." >&2
+    exit 1
+  fi
+
+  # Normalize from $RAW (works for both cache-hit and fresh-fetch paths,
+  # including --no-cache where no file was written this run).
+  printf '%s' "$RAW" | jq --arg since "$SINCE" --arg me "$ME" "$NORMALIZE_JQ" > "$TMP/blob_$i.json"
+  i=$((i+1))
+done
+
+# ---------- prompt assembly (jq, all repos slurped) ----------
+ASSEMBLE_JQ='
+def indent_body:
+  if (. // "") == "" then ""
+  else "  Body:\n" + (split("\n") | map("    " + .) | join("\n")) + "\n" end;
+
+def pr_detail:
+  "- [#\(.n)] \(.title) — +\(.adds)/-\(.dels) across \(.files) files"
+  + (if .draft then " [draft]" else "" end)
+  + "\n  URL: \(.url)\n"
+  + (if (.lifecycle == "merged") and ((.reviews // "") != "")
+     then "  Reviews: \(.reviews)\n" else "" end)
+  + (if .lifecycle == "touched_open"
+     then "  Recent activity in window: \(.recent_reviews) review(s), \(.recent_comments) comment(s)\n"
+     else (.body | indent_body) end);
+
+def pr_line:
+  "- [#\(.n)] \(.title) — \(.author)" + (if .draft then " [draft]" else "" end)
+  + "\n  URL: \(.url)\n";
+
+def pr_touched_line:
+  "- [#\(.n)] \(.title) — \(.author)\n  URL: \(.url)\n"
+  + "  Recent activity in window: \(.recent_reviews) review(s), \(.recent_comments) comment(s)\n";
+
+def issue_detail:
+  "- [#\(.n)] \(.title)\n  URL: \(.url)\n" + (.body | indent_body);
+
+def issue_line:
+  "- [#\(.n)] \(.title) — \(.author)\n  URL: \(.url)\n";
+
+def issue_touched_line:
+  "- [#\(.n)] \(.title) — \(.author)\n  URL: \(.url)\n"
+  + "  Recent activity in window: \(.recent_comments) comment(s)\n";
+
+def hdr($title; $items):
+  if ($items | length) == 0 then "" else "##### \($title)\n\n" + $items + "\n" end;
+
+def render_prs($class; $detail):
+  (.prs | map(select(.class == $class))) as $xs
+  | hdr("Merged in window";             [$xs[] | select(.lifecycle == "merged")          | (if $detail then pr_detail else pr_line end)] | join("\n"))
+  + hdr("Opened in window";             [$xs[] | select(.lifecycle == "opened")          | (if $detail then pr_detail else pr_line end)] | join("\n"))
+  + hdr("Closed unmerged";              [$xs[] | select(.lifecycle == "closed_unmerged") | pr_line]                                       | join("\n"))
+  + hdr("Open with activity in window"; [$xs[] | select(.lifecycle == "touched_open")    | pr_touched_line]                               | join("\n"));
+
+def render_issues($class; $detail):
+  (.issues | map(select(.class == $class))) as $xs
+  | hdr("Opened in window";             [$xs[] | select(.lifecycle == "opened")        | (if $detail then issue_detail else issue_line end)] | join("\n"))
+  + hdr("Closed in window";              [$xs[] | select(.lifecycle == "closed")       | issue_line]                                        | join("\n"))
+  + hdr("Open with activity in window"; [$xs[] | select(.lifecycle == "touched_open") | issue_touched_line]                                | join("\n"));
+
+# Render a repo subsection for a given class; emit empty string if the repo has
+# nothing in that class. Avoids leaking bare ### headers (like "### acme/widget")
+# for repos with no activity of that class.
+def repo_block($class; $pr_detail; $iss_detail):
+  . as $r
+  | ($r | render_prs($class; $pr_detail)) as $p
+  | ($r | render_issues($class; $iss_detail)) as $i
+  | ($p + $i) as $content
+  | if ($content == "") then "" else "### \($r.repo)\n\n" + $content end;
+
+"**You are writing a personal recap for @\($me), covering the window \($since) -> now across the repos listed below.**\n\n" +
+"Three sections follow:\n" +
+"- **What you did** — PRs and issues you authored. Treat this as a refresher for your own work; reproduce titles, file counts, and review state faithfully.\n" +
+"- **What others did** — PRs and issues others (humans) authored, summarized compactly. One line per item, no bodies. Use as context, not a to-do list.\n" +
+"- **Automated activity** — bot PRs/issues, listed raw. Aggregate the bot activity (e.g. \"3 dependabot bumps across 2 repos\") and call out anything significant (major version bump, security advisory); do not enumerate every bot PR.\n\n" +
+"Format as markdown. Link PRs and issues by number: [#123](url). Skip empty subsections silently. Keep your section concrete; keep the others section compact.\n\n" +
+# Compute each section body; only emit its header if its body is non-empty,
+# so we do not surface "## What others did" with nothing under it.
+(
+  ([.[] | repo_block("me"; true; true)]      | map(select(. != "")) | join("\n")) as $mine
+  | ([.[] | repo_block("other"; false; false)] | map(select(. != "")) | join("\n")) as $others
+  | ([.[] | repo_block("bot"; false; false)]   | map(select(. != "")) | join("\n")) as $bots
+  | "---\n\n"
+    + (if $mine   == "" then "" else "## What you did\n\n"    + $mine   + "\n\n" end)
+    + (if $others == "" then "" else "## What others did\n\n" + $others + "\n\n" end)
+    + (if $bots   == "" then "" else "## Automated activity (raw)\n\n" + $bots end)
+)
+'
+
+printf '%s\n' "$(jq -s --arg since "$SINCE" --arg me "$ME" -r "$ASSEMBLE_JQ" "$TMP"/blob_*.json)"
