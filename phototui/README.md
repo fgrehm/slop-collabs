@@ -7,6 +7,12 @@ A terminal album viewer/manager/organizer built on [OpenTUI](https://opentui.com
 
 For now: yes, via native terminal image rendering (Kitty graphics, Sixel, or Unicode block fallback, auto-detected). The long game is browsing, organizing, and managing albums from the terminal.
 
+
+
+https://github.com/user-attachments/assets/0bdb55a3-0f7e-4fd2-be58-fa219cc75e68
+
+
+
 ## Status
 
 Working POC. Uniform responsive grid with keyboard selection, full-screen viewer, and a performance stack tuned for real albums: virtualized grid, worker-pool decoding, disk thumbnail cache, and terminal-height-scaled prefetch. See [TODO](#todo).
