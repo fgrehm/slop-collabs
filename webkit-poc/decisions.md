@@ -2,8 +2,8 @@
 
 ## Scope
 
-This first increment is a standalone load harness, not the PMMA migration. Its
-purpose is to establish a minimal direct GTK 4 + WebKitGTK 6 execution path and
+This first increment is a standalone load harness, not the `pmmaapp` migration.
+Its purpose is to establish a minimal direct GTK 4 + WebKitGTK 6 execution path and
 a baseline for the WhatsApp CPU question.
 
 ## Package shape
