@@ -42,42 +42,43 @@ The default URL is `https://web.whatsapp.com`.
 
 ## Resource measurement
 
-[`resource_monitor`](https://ccl.cse.nd.edu/software/) is a compiled CLI from
-[Cooperative Computing Tools (CCTools)](https://ccl.cse.nd.edu/software/). It
-runs an arbitrary command, tracks its complete process tree, and writes JSON
-summary and time-series files. Install it on Ubuntu with:
+For a native, command-focused TUI, use [`proctui`](../proctui). It launches a
+command in its own Linux process group, includes browser/WebKit subprocesses,
+and displays aggregate and per-process CPU/RSS. It can also write CSV and JSON
+samples without a Python runtime:
+
+```sh
+cargo run --manifest-path ../proctui/Cargo.toml -- \
+  --interval 1 \
+  --duration 300 \
+  --csv webkit-poc.csv \
+  --json webkit-poc.json \
+  -- cargo run --features gui
+```
+
+For scripted or headless measurements, add `--no-tui`:
+
+```sh
+cargo run --manifest-path ../proctui/Cargo.toml -- \
+  --no-tui --interval 1 --duration 300 \
+  --csv webkit-poc.csv --json webkit-poc.json \
+  -- cargo run --features gui
+```
+
+The same runner can compare `pmmaapp` or Chromium. Keep the duration, interval,
+page, and interaction phase consistent. See the
+[`proctui README`](../proctui/README.md) for design limitations and details.
+
+For a more featureful alternative, [`resource_monitor`](https://ccl.cse.nd.edu/software/)
+from [Cooperative Computing Tools (CCTools)](https://ccl.cse.nd.edu/software/)
+runs arbitrary commands and writes summary/time-series files. It is available
+on Ubuntu with:
 
 ```sh
 sudo apt install coop-computing-tools
 ```
 
-Run the PoC under measurement for five minutes, sampling once per second:
-
-```sh
-resource_monitor \
-  --interval=1 \
-  --with-output-files=webkit-poc \
-  --with-time-series \
-  --without-disk-footprint \
-  -- cargo run --features gui
-```
-
-Run from this directory, or use an explicit manifest path from elsewhere:
-
-```sh
-resource_monitor \
-  --interval=1 \
-  --with-output-files=webkit-poc \
-  --with-time-series \
-  --without-disk-footprint \
-  -- cargo run --manifest-path /tmp/slop-collabs/webkit-poc/Cargo.toml --features gui
-```
-
-This produces `webkit-poc.summary` and `webkit-poc.series`. For a running
-process, `resource_monitor --pid PID` can attach to it, though wrapping the
-command is more accurate and reliably captures descendants.
-
-Use the same duration, interval, page, and interaction phase when comparing the
-PoC with Chrome/Chromium or `pmmaapp`. Tracking the complete process tree matters
-because WebKit runs work in subprocesses. Keep generated measurement files as
-local artifacts rather than treating them as source files.
+Use either tool to compare Chrome/Chromium, `pmmaapp`, and the bare WebKit
+harness. Tracking the complete process group/tree matters because WebKit runs
+work in subprocesses. Keep generated measurement files as local artifacts
+rather than treating them as source files.

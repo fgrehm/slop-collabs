@@ -6,6 +6,7 @@ A home for ~~vibe coded ideas~~ AI Collaborations that might never get a chance 
 - [clickwall](./clickwall) - A tiny Hugo paired shortcode that gates AI-generated sections of a blog post behind a "click to reveal" panel, TOS-style. After a reader accepts once, subsequent visits to the same post show a softer "you've seen this before" panel that unblurs on hover (or tap).
 - [zellicat](./zellicat) - A hacky bash wrapper that runs a command in a stacked zellij pane and captures its output, working around zellij not yet being able to hand pane output back to the caller ([zellij-org/zellij#4630](https://github.com/zellij-org/zellij/pull/4630)).
 - [webkit-poc](./webkit-poc) - A minimal GTK 4 + WebKitGTK 6 harness for loading pages and measuring a bare embedded browser baseline.
+- [proctui](./proctui) - A Linux Rust TUI for measuring a command's process group with CSV/JSON exports.
 
 ## LICENSE
 
