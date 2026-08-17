@@ -1,0 +1,19 @@
+[package]
+name = "webkit-poc"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Minimal GTK 4 and WebKitGTK 6 loading harness"
+
+[features]
+default = []
+gui = ["dep:gtk4", "dep:webkit6"]
+
+[dependencies]
+gtk4 = { version = "0.11", optional = true }
+webkit6 = { version = "0.6", optional = true }
+
+[[bin]]
+name = "webkit-poc"
+path = "src/main.rs"
+required-features = ["gui"]
