@@ -16,25 +16,44 @@ helper processes are included without a daemon or Python runtime.
 
 ## Run
 
-From this directory:
+`proctui` separates starting a workload from observing it. This lets an interactive application retain its terminal while the monitor runs elsewhere.
+
+In the first terminal, start the application normally through `proctui`:
 
 ```sh
-cargo run -- --interval 1 --duration 300 \
-  --csv webkit-poc.csv --json webkit-poc.json -- \
+cargo run -- run --inherit-output --pid-file /tmp/webkit.pgid -- \
   cargo run --manifest-path ../webkit-poc/Cargo.toml --features gui
 ```
 
-The TUI shows the current aggregate and process rows. Press `q` or `Esc` to
-stop the measured command. Use `--no-tui` for CI or scripted runs:
+It prints its process group ID and an attach command. In a second terminal, open the live TUI:
 
 ```sh
-cargo run -- --no-tui --interval 1 --duration 60 \
-  --csv chromium.csv --json chromium.json -- \
-  chromium https://web.whatsapp.com
+cargo run -- attach --pgid "$(cat /tmp/webkit.pgid)" \
+  --csv webkit-timeline.csv --json webkit-run.json
 ```
 
-Use `--inherit-output` when the measured command's stdout/stderr should remain
-visible. By default output is hidden so it cannot corrupt the TUI.
+You can also attach from an existing process PID. `proctui` resolves its process group once:
+
+```sh
+cargo run -- attach --pid "$(pgrep -n chromium)"
+```
+
+The TUI shows the current aggregate and process rows. Press `q` or `Esc` to stop observing. Attached workloads are never killed. A launched workload is killed as a process group when it reaches `--duration` or when its own TUI is stopped.
+
+`--csv` writes aggregate timeline rows (`elapsed_seconds`, CPU, RSS, and process count). `--json` writes those samples plus the process rows visible at each sample. Use `--no-tui` for CI or scripted runs.
+
+## View saved runs
+
+Open either export in a playback TUI:
+
+```sh
+cargo run -- view webkit-run.json
+cargo run -- view webkit-timeline.csv
+```
+
+Use left/right (or `h`/`l`) to move between samples and Space to play. JSON includes the per-process table. CSV contains aggregate values only.
+
+Use `run` without `--inherit-output` for noninteractive commands. With `--inherit-output`, `proctui` does not open a TUI, so the child has exclusive terminal access.
 
 ## Design notes and limitations
 

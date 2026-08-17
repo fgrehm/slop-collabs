@@ -1,7 +1,7 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{fs, io, path::Path, process::Command, time::Duration};
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProcessSample {
     pub pid: i32,
     pub name: String,
@@ -9,7 +9,7 @@ pub struct ProcessSample {
     pub rss_bytes: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Sample {
     pub elapsed_seconds: f64,
     pub cpu_percent: f64,
@@ -64,6 +64,11 @@ fn process_group(pgrp: i32) -> Vec<(i32, ProcessState)> {
             (state.pgrp == pgrp).then_some((pid, state))
         })
         .collect()
+}
+
+/// Return the process group ID for `pid` as reported by `/proc`.
+pub fn process_group_id(pid: i32) -> Option<i32> {
+    read_process(pid).map(|state| state.pgrp)
 }
 
 pub fn sample_group(pgrp: i32, previous: &mut Vec<(i32, u64)>, elapsed: Duration) -> Sample {
