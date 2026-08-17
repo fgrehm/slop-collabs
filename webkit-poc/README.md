@@ -42,43 +42,42 @@ The default URL is `https://web.whatsapp.com`.
 
 ## Resource measurement
 
-[`psrecord`](https://github.com/astrofrog/psrecord) records CPU and memory
-activity for an arbitrary process, including its subprocesses, and can write a
-log plus a plot. Install it with `pipx`:
+[`resource_monitor`](https://ccl.cse.nd.edu/software/) is a compiled CLI from
+[Cooperative Computing Tools (CCTools)](https://ccl.cse.nd.edu/software/). It
+runs an arbitrary command, tracks its complete process tree, and writes JSON
+summary and time-series files. Install it on Ubuntu with:
 
 ```sh
-pipx install psrecord
+sudo apt install coop-computing-tools
 ```
 
 Run the PoC under measurement for five minutes, sampling once per second:
 
 ```sh
-psrecord \
-  'cargo run --features gui' \
-  --interval 1 \
-  --duration 300 \
-  --include-children \
-  --log webkit-poc.log \
-  --plot webkit-poc.png
+resource_monitor \
+  --interval=1 \
+  --with-output-files=webkit-poc \
+  --with-time-series \
+  --without-disk-footprint \
+  -- cargo run --features gui
 ```
 
 Run from this directory, or use an explicit manifest path from elsewhere:
 
 ```sh
-psrecord \
-  'cargo run --manifest-path /tmp/slop-collabs/webkit-poc/Cargo.toml --features gui' \
-  --interval 1 --duration 300 --include-children \
-  --log webkit-poc.log --plot webkit-poc.png
+resource_monitor \
+  --interval=1 \
+  --with-output-files=webkit-poc \
+  --with-time-series \
+  --without-disk-footprint \
+  -- cargo run --manifest-path /tmp/slop-collabs/webkit-poc/Cargo.toml --features gui
 ```
 
-For a running process, pass its PID instead:
-
-```sh
-psrecord "$PID" --interval 1 --include-children \
-  --duration 300 --log webkit-poc.log --plot webkit-poc.png
-```
+This produces `webkit-poc.summary` and `webkit-poc.series`. For a running
+process, `resource_monitor --pid PID` can attach to it, though wrapping the
+command is more accurate and reliably captures descendants.
 
 Use the same duration, interval, page, and interaction phase when comparing the
-PoC with Chrome/Chromium or `pmmaapp`. `--include-children` matters because
-WebKit runs work in subprocesses. Keep the generated logs and plots as local
-measurement artifacts rather than treating them as source files.
+PoC with Chrome/Chromium or `pmmaapp`. Tracking the complete process tree matters
+because WebKit runs work in subprocesses. Keep generated measurement files as
+local artifacts rather than treating them as source files.
