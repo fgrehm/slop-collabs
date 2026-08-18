@@ -7,12 +7,21 @@ Chromium, where the interesting work happens in subprocesses.
 It samples:
 
 - aggregate CPU (100% means one fully-used core; multi-process workloads can exceed 100%)
-- aggregate resident memory (RSS)
+- aggregate resident memory (RSS), proportional memory (PSS), and unique memory (USS)
 - process count
-- each process's CPU and RSS in the live view and JSON export
+- each process's parent, CPU, RSS, PSS, and USS in the live view and JSON export
 
-The command is placed in its own process group, so descendants such as browser
-helper processes are included without a daemon or Python runtime.
+The command is placed in its own process group, so descendants such as browser helper processes are included without a daemon or Python runtime.
+
+## What the numbers mean
+
+- **CPU:** 100% means one CPU core was fully busy during the sample. A browser using two cores can show 200%.
+- **RSS:** Memory currently mapped into each process. Adding RSS across processes can count shared WebKit, GTK, and library pages more than once, so treat it as an upper bound.
+- **PSS:** Shared pages are divided among the processes using them. The summed PSS is the best headline estimate for how much physical memory the measured workload is responsible for.
+- **USS:** Memory used only by this workload's processes, with no shared pages included. It is useful for finding private growth, but understates the workload's total footprint because shared pages still consume memory.
+- **Process count:** The number of live processes in the measured process group at that sample.
+
+For example, `1.14 GiB PSS`, `1.67 GiB RSS`, and `1.02 GiB USS` means the workload is responsible for about 1.14 GiB of memory. Its per-process RSS adds up to 1.67 GiB because some pages are shared, while 1.02 GiB is private to its processes.
 
 ## Run
 
@@ -40,7 +49,7 @@ cargo run -- attach --pid "$(pgrep -n chromium)"
 
 The TUI shows the current aggregate and process rows. Press `q` or `Esc` to stop observing. Attached workloads are never killed. A launched workload is killed as a process group when it reaches `--duration` or when its own TUI is stopped.
 
-`--csv` writes aggregate timeline rows (`elapsed_seconds`, CPU, RSS, and process count). `--json` writes those samples plus the process rows visible at each sample. Use `--no-tui` for CI or scripted runs.
+`--csv` writes aggregate timeline rows (`elapsed_seconds`, CPU, RSS, PSS, USS, and process count). `--json` writes those samples plus the process rows visible at each sample. Use `--no-tui` for CI or scripted runs.
 
 ## View saved runs
 
@@ -57,12 +66,7 @@ Use `run` without `--inherit-output` for noninteractive commands. With `--inheri
 
 ## Design notes and limitations
 
-This first increment intentionally stays small and Linux-specific: it reads
-`/proc`, uses `setpgid`, and exports samples rather than pretending to be a
-complete profiler. RSS is summed across the process group, so shared pages may
-be counted more than once. CPU is based on `/proc/<pid>/stat` deltas and is
-reported relative to one core. Process groups created by a child itself are not
-included.
+This first increment intentionally stays small and Linux-specific: it reads `/proc`, uses `setpgid`, and exports samples rather than pretending to be a complete profiler. RSS is summed across the process group, so shared pages may be counted more than once. PSS from `/proc/<pid>/smaps_rollup` apportions shared pages, while USS is `Private_Clean + Private_Dirty`. CPU is based on `/proc/<pid>/stat` deltas and is reported relative to one core. Process groups created by a child itself are not included.
 
 The existing tools remain useful: `btop`/`htop` are excellent interactive
 system monitors, `pidstat` and `atop` are mature system-wide recorders, and

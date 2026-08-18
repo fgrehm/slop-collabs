@@ -13,6 +13,7 @@ use ratatui::{
     widgets::{Block, Borders, Gauge, Paragraph, Row, Table},
 };
 use std::{
+    collections::{HashMap, HashSet},
     fs, io,
     path::PathBuf,
     process::Child,
@@ -206,7 +207,9 @@ fn invalid_export(error: serde_json::Error) -> io::Error {
 fn read_csv_samples(contents: &str) -> io::Result<Vec<Sample>> {
     let mut lines = contents.lines();
     let header = lines.next().unwrap_or_default();
-    if header != "elapsed_seconds,cpu_percent,rss_bytes,process_count" {
+    let has_memory_breakdown =
+        header == "elapsed_seconds,cpu_percent,rss_bytes,pss_bytes,uss_bytes,process_count";
+    if !has_memory_breakdown && header != "elapsed_seconds,cpu_percent,rss_bytes,process_count" {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "unrecognized CSV export header",
@@ -223,18 +226,39 @@ fn read_csv_samples(contents: &str) -> io::Result<Vec<Sample>> {
                     format!("invalid CSV row {}", index + 2),
                 )
             };
-            if fields.len() != 4 {
+            let expected_fields = if has_memory_breakdown { 6 } else { 4 };
+            if fields.len() != expected_fields {
                 return Err(error());
             }
             Ok(Sample {
                 elapsed_seconds: fields[0].parse().map_err(|_| error())?,
                 cpu_percent: fields[1].parse().map_err(|_| error())?,
                 rss_bytes: fields[2].parse().map_err(|_| error())?,
-                process_count: fields[3].parse().map_err(|_| error())?,
+                pss_bytes: has_memory_breakdown
+                    .then(|| parse_optional_csv_bytes(fields[3], index + 2))
+                    .transpose()?
+                    .flatten(),
+                uss_bytes: has_memory_breakdown
+                    .then(|| parse_optional_csv_bytes(fields[4], index + 2))
+                    .transpose()?
+                    .flatten(),
+                process_count: fields[if has_memory_breakdown { 5 } else { 3 }]
+                    .parse()
+                    .map_err(|_| error())?,
                 processes: Vec::new(),
             })
         })
         .collect()
+}
+
+fn parse_optional_csv_bytes(value: &str, row: usize) -> io::Result<Option<u64>> {
+    if value.is_empty() {
+        Ok(None)
+    } else {
+        value.parse().map(Some).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, format!("invalid CSV row {row}"))
+        })
+    }
 }
 
 fn monitor(
@@ -358,39 +382,131 @@ fn draw(frame: &mut ratatui::Frame, sample: &Sample, process_title: &str, footer
     );
     frame.render_widget(
         Paragraph::new(format!(
-            "RSS  {}\nProcesses  {}\nElapsed  {:.1}s",
+            "RSS  {}\nPSS  {}\nUSS  {}\nProcesses  {}\nElapsed  {:.1}s",
             bytes(sample.rss_bytes),
+            bytes_option(sample.pss_bytes),
+            bytes_option(sample.uss_bytes),
             sample.process_count,
             sample.elapsed_seconds
         ))
         .block(Block::default().title("Resources").borders(Borders::ALL)),
         header[1],
     );
-    let rows = sample.processes.iter().cloned().map(|process| {
-        Row::new([
-            process.pid.to_string(),
-            process.name,
-            format!("{:.1}%", process.cpu_percent),
-            bytes(process.rss_bytes),
-        ])
-    });
+    let rows = process_tree(&sample.processes)
+        .into_iter()
+        .map(|(process, name)| {
+            Row::new([
+                process.pid.to_string(),
+                name,
+                format!("{:.1}%", process.cpu_percent),
+                bytes(process.rss_bytes),
+                bytes_option(process.pss_bytes),
+                bytes_option(process.uss_bytes),
+            ])
+        });
     frame.render_widget(
         Table::new(
             rows,
             [
                 Constraint::Length(8),
-                Constraint::Min(20),
-                Constraint::Length(10),
-                Constraint::Length(12),
+                Constraint::Min(16),
+                Constraint::Length(9),
+                Constraint::Length(11),
+                Constraint::Length(11),
+                Constraint::Length(11),
             ],
         )
         .header(
-            Row::new(["PID", "PROCESS", "CPU", "RSS"]).style(Style::default().fg(Color::Yellow)),
+            Row::new(["PID", "PROCESS", "CPU", "RSS", "PSS", "USS"])
+                .style(Style::default().fg(Color::Yellow)),
         )
         .block(Block::default().title(process_title).borders(Borders::ALL)),
         chunks[1],
     );
     frame.render_widget(Paragraph::new(footer), chunks[2]);
+}
+
+fn process_tree(processes: &[proctui::ProcessSample]) -> Vec<(proctui::ProcessSample, String)> {
+    let process_ids: HashSet<_> = processes.iter().map(|process| process.pid).collect();
+    let mut children: HashMap<i32, Vec<proctui::ProcessSample>> = HashMap::new();
+    let mut roots = Vec::new();
+    for process in processes {
+        if process_ids.contains(&process.parent_pid) {
+            children
+                .entry(process.parent_pid)
+                .or_default()
+                .push(process.clone());
+        } else {
+            roots.push(process.clone());
+        }
+    }
+    for nodes in children.values_mut() {
+        nodes.sort_by_key(|process| process.pid);
+    }
+    roots.sort_by_key(|process| process.pid);
+
+    let mut rows = Vec::with_capacity(processes.len());
+    let mut visited = HashSet::new();
+    for (index, root) in roots.iter().enumerate() {
+        append_tree_row(
+            root,
+            "",
+            index + 1 == roots.len(),
+            &children,
+            &mut visited,
+            &mut rows,
+        );
+    }
+    for process in processes {
+        if !visited.contains(&process.pid) {
+            append_tree_row(process, "", true, &children, &mut visited, &mut rows);
+        }
+    }
+    rows
+}
+
+fn append_tree_row(
+    process: &proctui::ProcessSample,
+    prefix: &str,
+    is_last: bool,
+    children: &HashMap<i32, Vec<proctui::ProcessSample>>,
+    visited: &mut HashSet<i32>,
+    rows: &mut Vec<(proctui::ProcessSample, String)>,
+) {
+    if !visited.insert(process.pid) {
+        return;
+    }
+    let branch = if prefix.is_empty() {
+        ""
+    } else if is_last {
+        "└─ "
+    } else {
+        "├─ "
+    };
+    rows.push((process.clone(), format!("{prefix}{branch}{}", process.name)));
+    let child_prefix = if prefix.is_empty() {
+        " ".to_string()
+    } else if is_last {
+        format!("{prefix}   ")
+    } else {
+        format!("{prefix}│  ")
+    };
+    if let Some(nodes) = children.get(&process.pid) {
+        for (index, child) in nodes.iter().enumerate() {
+            append_tree_row(
+                child,
+                &child_prefix,
+                index + 1 == nodes.len(),
+                children,
+                visited,
+                rows,
+            );
+        }
+    }
+}
+
+fn bytes_option(value: Option<u64>) -> String {
+    value.map_or_else(|| "-".to_string(), bytes)
 }
 
 fn bytes(n: u64) -> String {
@@ -423,5 +539,29 @@ mod tests {
         let error = read_csv_samples("time,cpu\n1,2\n").expect_err("header should be rejected");
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn process_tree_nests_group_members_under_their_parent() {
+        let processes = vec![
+            process(10, 1, "root"),
+            process(11, 10, "child"),
+            process(12, 11, "grandchild"),
+        ];
+        let rows = process_tree(&processes);
+
+        assert_eq!(rows[2].1, "    └─ grandchild");
+    }
+
+    fn process(pid: i32, parent_pid: i32, name: &str) -> proctui::ProcessSample {
+        proctui::ProcessSample {
+            pid,
+            parent_pid,
+            name: name.to_string(),
+            cpu_percent: 0.0,
+            rss_bytes: 0,
+            pss_bytes: None,
+            uss_bytes: None,
+        }
     }
 }
