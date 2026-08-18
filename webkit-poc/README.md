@@ -38,31 +38,36 @@ cargo run --features gui
 cargo run --features gui -- --url https://example.com
 ```
 
-The default URL is `https://web.whatsapp.com`.
+The default URL is `https://web.whatsapp.com`. WebKitGTK intentionally identifies itself to WhatsApp as macOS, even on Linux, because WhatsApp blocks WebKitGTK's normal user agent. This is an upstream [WebKitGTK compatibility quirk](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/platform/glib/UserAgentQuirks.cpp), so WhatsApp's linked-device list may show this app as a Mac.
+
+## Persistent profile
+
+The app stores website data, including WhatsApp's login session, under `/tmp/webkit-poc`. Delete that directory to reset the profile and sign in again.
 
 ## Resource measurement
 
-For a native, command-focused TUI, use [`proctui`](../proctui). It launches a
-command in its own Linux process group, includes browser/WebKit subprocesses,
-and displays aggregate and per-process CPU/RSS. It can also write CSV and JSON
-samples without a Python runtime:
+For a native, command-focused TUI, use [`proctui`](../proctui). It launches a command in its own Linux process group, includes browser/WebKit subprocesses, and displays aggregate and per-process CPU/RSS. Because this PoC opens a graphical GTK window, its TUI can run in the same terminal:
 
 ```sh
 cargo run --manifest-path ../proctui/Cargo.toml -- \
-  --interval 1 \
-  --duration 300 \
-  --csv webkit-poc.csv \
-  --json webkit-poc.json \
-  -- cargo run --features gui
+  run --interval 1 --duration 300 \
+  --csv webkit-poc.csv --json webkit-poc.json -- \
+  cargo run --features gui
 ```
 
-For scripted or headless measurements, add `--no-tui`:
+Close the GTK window to end the run, or press `q` in proctui to stop its process group. Review an exported measurement later with:
+
+```sh
+cargo run --manifest-path ../proctui/Cargo.toml -- view webkit-poc.json
+```
+
+For scripted or headless measurements, add `--no-tui` after `run`:
 
 ```sh
 cargo run --manifest-path ../proctui/Cargo.toml -- \
-  --no-tui --interval 1 --duration 300 \
-  --csv webkit-poc.csv --json webkit-poc.json \
-  -- cargo run --features gui
+  run --no-tui --interval 1 --duration 300 \
+  --csv webkit-poc.csv --json webkit-poc.json -- \
+  cargo run --features gui
 ```
 
 The same runner can compare `pmmaapp` or Chromium. Keep the duration, interval,
