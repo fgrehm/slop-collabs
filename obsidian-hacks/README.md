@@ -1,0 +1,51 @@
+# Obsidian stuff
+
+A single Obsidian plugin for CSS and JavaScript experiments. Source files and build configuration are committed; generated files in `dist/` are ignored and recreated by `install.sh`.
+
+## Layout
+
+- `styles.css` - CSS bundled with the plugin, currently based on the collected task-checkbox hacks.
+- `src/main.ts` - TypeScript plugin code and experiments.
+- `manifest.json`, `package.json`, `esbuild.config.mjs`, `tsconfig.json` - Plugin metadata and build infrastructure.
+- `hacks.css` - Original CSS source retained as a reference.
+
+## Plugin layout
+
+Each plugin directory should contain the files Obsidian loads from that plugin's install directory:
+
+```text
+plugins/<plugin-id>/
+├── main.js
+├── manifest.json
+└── styles.css  # optional
+```
+
+Source code and build configuration can live alongside those files when a plugin needs to be built. Keep generated bundles out of version control only when they can be reproduced locally; Obsidian needs `main.js` in the installed plugin directory.
+
+## Install
+
+Install the collected CSS into the default vault with:
+
+```sh
+./install.sh
+```
+
+Set `OBSIDIAN_VAULT` to install into another vault:
+
+```sh
+OBSIDIAN_VAULT="$HOME/path/to/vault" ./install.sh
+```
+
+The script builds a `dist/` install artifact and mirrors it with `rsync --delete` into `.obsidian/plugins/obsidian-hacks/`, including `styles.css`:
+
+```sh
+cd obsidian-hacks
+npm install
+./install.sh
+```
+
+After installation, open Obsidian settings, go to **Community plugins**, refresh the list of installed plugins, and then enable **Obsidian Hacks**.
+
+## CSS notes
+
+CSS in this directory may depend on a particular theme or community plugin. Keep source URLs and compatibility notes near copied rules, and prefer one focused snippet per file once a rule set becomes stable.

@@ -7,6 +7,7 @@ A home for ~~vibe coded ideas~~ AI Collaborations that might never get a chance 
 - [zellicat](./zellicat) - A hacky bash wrapper that runs a command in a stacked zellij pane and captures its output, working around zellij not yet being able to hand pane output back to the caller ([zellij-org/zellij#4630](https://github.com/zellij-org/zellij/pull/4630)).
 - [webkit-poc](./webkit-poc) - A minimal GTK 4 + WebKitGTK 6 harness for loading pages and measuring a bare embedded browser baseline.
 - [proctui](./proctui) - A Linux Rust TUI for measuring a command's process group with CSV/JSON exports.
+- [obsidian-hacks](./obsidian-hacks) - Obsidian plugin experiments, CSS snippets, and vault customizations.
 
 ## LICENSE
 
