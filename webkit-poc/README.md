@@ -1,12 +1,8 @@
 # WebKitGTK 6 PoC
 
-A deliberately small Linux harness for comparing a bare GTK 4 + WebKitGTK 6
-window with browser and future `pmmaapp` implementations. It currently loads
-WhatsApp Web by default and accepts another HTTP(S) URL for local experiments.
+A deliberately small Linux harness for comparing a bare GTK 4 + WebKitGTK 6 window with browser and future `pmmaapp` implementations. It currently loads WhatsApp Web by default and accepts another HTTP(S) URL for local experiments.
 
-This is not a `pmmaapp` port and intentionally contains no `pmmaapp` policy,
-injected scripts, ad blocking, tray integration, notifications, or profiling
-logic.
+This is not a `pmmaapp` port and intentionally contains no `pmmaapp` policy, injected scripts, ad blocking, tray integration, notifications, or profiling logic.
 
 ## Requirements
 
@@ -20,8 +16,7 @@ On Ubuntu 24.04:
 sudo apt install libgtk-4-dev libwebkitgtk-6.0-dev
 ```
 
-The equivalent package names should be used on Arch and Debian 13; verify them
-against those distributions rather than assuming Ubuntu names are portable.
+The equivalent package names should be used on Arch and Debian 13; verify them against those distributions rather than assuming Ubuntu names are portable.
 
 ## Run
 
@@ -70,20 +65,12 @@ cargo run --manifest-path ../proctui/Cargo.toml -- \
   cargo run --features gui
 ```
 
-The same runner can compare `pmmaapp` or Chromium. Keep the duration, interval,
-page, and interaction phase consistent. See the
-[`proctui README`](../proctui/README.md) for design limitations and details.
+The same runner can compare `pmmaapp` or Chromium. Keep the duration, interval, page, and interaction phase consistent. See the [`proctui README`](../proctui/README.md) for design limitations and details.
 
-For a more featureful alternative, [`resource_monitor`](https://ccl.cse.nd.edu/software/)
-from [Cooperative Computing Tools (CCTools)](https://ccl.cse.nd.edu/software/)
-runs arbitrary commands and writes summary/time-series files. It is available
-on Ubuntu with:
+For a more featureful alternative, [`resource_monitor`](https://ccl.cse.nd.edu/software/) from [Cooperative Computing Tools (CCTools)](https://ccl.cse.nd.edu/software/) runs arbitrary commands and writes summary/time-series files. It is available on Ubuntu with:
 
 ```sh
 sudo apt install coop-computing-tools
 ```
 
-Use either tool to compare Chrome/Chromium, `pmmaapp`, and the bare WebKit
-harness. Tracking the complete process group/tree matters because WebKit runs
-work in subprocesses. Keep generated measurement files as local artifacts
-rather than treating them as source files.
+Use either tool to compare Chrome/Chromium, `pmmaapp`, and the bare WebKit harness. Tracking the complete process group/tree matters because WebKit runs work in subprocesses. Keep generated measurement files as local artifacts rather than treating them as source files.
