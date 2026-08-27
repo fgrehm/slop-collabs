@@ -18,6 +18,5 @@ mkdir -p "$plugin_target"
 # removed plugin files from lingering in the vault.
 mkdir -p "$source_dir/dist"
 cp "$source_dir/manifest.json" "$source_dir/dist/"
-[[ -f "$source_dir/styles.css" ]] && cp "$source_dir/styles.css" "$source_dir/dist/"
 rsync --archive --delete "$source_dir/dist/" "$plugin_target/"
 printf 'Installed plugin %s to %s\n' "$plugin_id" "$plugin_target"

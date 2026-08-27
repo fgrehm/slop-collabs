@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "typecheck": "tsc --noEmit",
-    "build": "npm run typecheck && node esbuild.config.mjs production",
+    "generate-css": "node scripts/generate-css.mjs",
+    "build": "npm run generate-css && npm run typecheck && node esbuild.config.mjs production",
     "lint": "prek run --all-files"
   },
   "devDependencies": {

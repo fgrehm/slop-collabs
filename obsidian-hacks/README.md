@@ -1,13 +1,14 @@
 # Obsidian stuff
 
-A single Obsidian plugin for CSS and JavaScript experiments. Source files and build configuration are committed; generated files in `dist/` are ignored and recreated by `install.sh`.
+A single Obsidian plugin for CSS and JavaScript experiments. Source files and build configuration are committed; the build combines `src/styles.css` with `task-icons.json` into generated files in `dist/`.
 
 ## Layout
 
-- `styles.css` - CSS bundled with the plugin, currently based on the collected task-checkbox hacks.
+- `task-icons.json` - Task marker to emoji mapping.
+- `scripts/generate-css.mjs` - Combines the base CSS and task-icon mapping during builds.
 - `src/main.ts` - TypeScript plugin code and experiments.
+- `src/styles.css` - Hand-written base CSS.
 - `manifest.json`, `package.json`, `esbuild.config.mjs`, `tsconfig.json` - Plugin metadata and build infrastructure.
-- `hacks.css` - Original CSS source retained as a reference.
 
 ## Plugin layout
 

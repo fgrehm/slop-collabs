@@ -1,0 +1,15 @@
+/* Base styles for Obsidian Hacks. Add stable, hand-written CSS here. */
+
+li:has(> input[data-task])::before {
+  display: inline-block;
+  width: 1.5em;
+  margin-inline-end: 0.25em;
+  text-align: center;
+  vertical-align: middle;
+}
+
+li:has(> input[data-task]) > input:checked {
+  background: none;
+  border: 0;
+  opacity: 0;
+}
