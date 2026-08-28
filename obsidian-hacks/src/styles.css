@@ -1,15 +1,36 @@
 /* Base styles for Obsidian Hacks. Add stable, hand-written CSS here. */
 
-li:has(> input[data-task])::before {
-  display: inline-block;
-  width: 1.5em;
-  margin-inline-end: 0.25em;
-  text-align: center;
-  vertical-align: middle;
+li.task-list-item > input.task-list-item-checkbox {
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
 }
 
-li:has(> input[data-task]) > input:checked {
+li[data-task]:not([data-task=""]) > p::before,
+li[data-task]:not([data-task=""]):not(:has(> p))::before,
+li.task-list-item:not(.is-checked)::before {
+  display: inline-block;
+  width: 1.5em;
+  margin: var(--checkbox-margin, 0 6px 0 -2em);
+  text-align: center;
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+li.task-list-item:not(.is-checked)::before {
+  content: "🔳";
+}
+
+li[data-task]:not([data-task=""]) > p > input:checked,
+li[data-task]:not([data-task=""]) > input:checked {
+  width: 0;
+  height: 0;
+  margin: 0 !important;
+  padding: 0;
   background: none;
   border: 0;
   opacity: 0;
+  visibility: hidden !important;
 }

@@ -1,12 +1,13 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const baseCss = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
-const icons = JSON.parse(await readFile(new URL("../task-icons.json", import.meta.url)));
+const icons = JSON.parse(await readFile(new URL("../src/task-icons.json", import.meta.url)));
 const escapeCss = (value) => value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 
 const rules = Object.entries(icons)
   .map(([task, emoji]) => {
-    const selector = `li:has(> input[data-task="${escapeCss(task)}"])::before`;
+    const selector = `li[data-task="${escapeCss(task)}"] > p::before,
+li[data-task="${escapeCss(task)}"]:not(:has(> p))::before`;
     return `${selector} { content: "${escapeCss(emoji)}"; }`;
   })
   .join("\n");

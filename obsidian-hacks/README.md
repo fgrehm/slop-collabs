@@ -4,7 +4,7 @@ A single Obsidian plugin for CSS and JavaScript experiments. Source files and bu
 
 ## Layout
 
-- `task-icons.json` - Task marker to emoji mapping.
+- `src/task-icons.json` - Task marker to emoji mapping.
 - `scripts/generate-css.mjs` - Combines the base CSS and task-icon mapping during builds.
 - `src/main.ts` - TypeScript plugin code and experiments.
 - `src/styles.css` - Hand-written base CSS.
@@ -46,6 +46,22 @@ npm install
 ```
 
 After installation, open Obsidian settings, go to **Community plugins**, refresh the list of installed plugins, and then enable **Obsidian Hacks**.
+
+## Debugging
+
+On Obsidian Desktop, open Developer Tools with `Ctrl+Shift+I` (or `Cmd+Option+I` on macOS). Use the **Console** tab to inspect task elements:
+
+```js
+document.querySelectorAll('li[data-task="/"]')
+```
+
+Select a task in the Elements tab and inspect its surrounding markup with:
+
+```js
+$0.closest("li").outerHTML
+```
+
+Developer Tools are not available on Obsidian mobile.
 
 ## CSS notes
 
