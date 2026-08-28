@@ -1,5 +1,24 @@
 /* Base styles for Obsidian Hacks. Add stable, hand-written CSS here. */
 
+.callout[data-callout="reading-list"],
+.callout[data-callout="journaling"] {
+  border-left-width: 0.25em;
+}
+
+.callout[data-callout="reading-list"] {
+  --callout-color: 70, 120, 190;
+  --callout-icon: lucide-book-open;
+  background-color: rgba(70, 120, 190, 0.1);
+  border-left-color: rgb(70, 120, 190);
+}
+
+.callout[data-callout="journaling"] {
+  --callout-color: 170, 100, 75;
+  --callout-icon: lucide-recycle;
+  background-color: rgba(170, 100, 75, 0.1);
+  border-left-color: rgb(170, 100, 75);
+}
+
 li.task-list-item > input.task-list-item-checkbox {
   cursor: pointer;
   appearance: none;

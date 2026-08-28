@@ -45,7 +45,7 @@ npm install
 ./install.sh
 ```
 
-After installation, open Obsidian settings, go to **Community plugins**, refresh the list of installed plugins, and then enable **Obsidian Hacks**.
+After installation, open Obsidian settings, go to **Community plugins**, refresh the list of installed plugins, and then enable **Obsidian Hacks**. To see changes after reinstalling, run **Reload app without saving** from the command palette (`Ctrl+P`).
 
 ## Debugging
 
