@@ -19,6 +19,27 @@
   border-left-color: rgb(170, 100, 75);
 }
 
+.callout[data-callout="bigquote"] {
+  --callout-color: 120, 95, 160;
+  --callout-icon: lucide-quote;
+  background-color: rgba(120, 95, 160, 0.1);
+  border-left-color: rgb(120, 95, 160);
+  text-align: center;
+  padding: 0.6em;
+}
+
+.callout[data-callout="bigquote"] .callout-content {
+  font-size: 1.2em;
+}
+
+.callout[data-callout="bigquote"] .callout-title {
+  display: none;
+  justify-content: center;
+  font-size: 0.6em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 li.task-list-item > input.task-list-item-checkbox {
   cursor: pointer;
   appearance: none;

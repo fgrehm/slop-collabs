@@ -4,6 +4,9 @@ This page demonstrates Obsidian's built-in callout types. The shortcode appears 
 
 ## Custom types
 
+> [!bigquote] Big quote (`bigquote`)
+> Make it work, then make it clear.
+
 > [!reading-list] Reading list (`reading-list`)
 > Books, articles, papers, and other things to read.
 
