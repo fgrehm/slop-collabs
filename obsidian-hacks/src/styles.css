@@ -1,5 +1,14 @@
 /* Base styles for Obsidian Hacks. Add stable, hand-written CSS here. */
 
+.markdown-preview-view h1:has(.heading-collapse-indicator),
+.markdown-preview-view h2:has(.heading-collapse-indicator),
+.markdown-preview-view h3:has(.heading-collapse-indicator),
+.markdown-preview-view h4:has(.heading-collapse-indicator),
+.markdown-preview-view h5:has(.heading-collapse-indicator),
+.markdown-preview-view h6:has(.heading-collapse-indicator) {
+  cursor: pointer;
+}
+
 .callout[data-callout="reading-list"],
 .callout[data-callout="journaling"] {
   border-left-width: 0.25em;

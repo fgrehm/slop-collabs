@@ -2,6 +2,21 @@ import { MarkdownView, Notice, Plugin } from "obsidian";
 
 export default class HelloObsidianPlugin extends Plugin {
   async onload(): Promise<void> {
+    this.registerDomEvent(document, "click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element) || target.closest("a, button, input")) return;
+
+      const heading = target.closest<HTMLHeadingElement>(
+        ".markdown-preview-view h1, .markdown-preview-view h2, .markdown-preview-view h3, .markdown-preview-view h4, .markdown-preview-view h5, .markdown-preview-view h6",
+      );
+      const collapseIndicator = heading?.querySelector<HTMLElement>(
+        ".heading-collapse-indicator",
+      );
+      if (collapseIndicator && !target.closest(".heading-collapse-indicator")) {
+        collapseIndicator.click();
+      }
+    });
+
     this.registerDomEvent(document, "click", async (event) => {
       const target = event.target;
       if (!(target instanceof Element) || target.closest("a, button, input")) return;
