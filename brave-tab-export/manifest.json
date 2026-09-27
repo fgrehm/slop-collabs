@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Export",
+  "version": "0.1.0",
+  "description": "Export the URLs of your tab groups to a Markdown file.",
+  "permissions": ["tabs", "tabGroups", "downloads"],
+  "action": {
+    "default_title": "Export tab groups",
+    "default_popup": "popup.html"
+  }
+}
